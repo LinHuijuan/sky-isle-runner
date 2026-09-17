@@ -506,6 +506,7 @@ export class Game {
         stars: this.save.stageStars[String(s.id)] ?? 0,
         exclusive: s.exclusive,
         bossKeys: s.bossKeys,
+        preview: s.preview,
       })),
       (id) => {
         this.selectedStage = id;

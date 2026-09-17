@@ -308,6 +308,7 @@ export class Hud {
       stars: number;
       exclusive?: string;
       bossKeys?: number;
+      preview?: string;
     }>,
     onPick: (id: number) => void,
   ): void {
@@ -332,12 +333,18 @@ export class Hud {
       if (s.bossKeys && s.bossKeys > 0) {
         tags.push(`<span class="tag warn">${s.bossKeys} 钥匙</span>`);
       }
+      const preview = s.preview
+        ? `<img class="stage-thumb${s.locked ? ' locked' : ''}" src="${s.preview}" alt="" loading="lazy" />`
+        : '';
       btn.innerHTML = `
-        <span class="code">${s.code}</span>
-        <span class="stars-mini">${'★'.repeat(s.stars)}${'☆'.repeat(3 - s.stars)}</span>
-        <span class="name">${s.name}</span>
-        <span class="sub">${s.locked ? '通关上一关解锁' : s.subtitle}</span>
-        ${tags.length ? `<div class="tag-row" style="grid-column:1/-1">${tags.join('')}</div>` : ''}
+        ${preview}
+        <div class="stage-body">
+          <span class="code">${s.code}</span>
+          <span class="stars-mini">${'★'.repeat(s.stars)}${'☆'.repeat(3 - s.stars)}</span>
+          <span class="name">${s.name}</span>
+          <span class="sub">${s.locked ? '通关上一关解锁' : s.subtitle}</span>
+          ${tags.length ? `<div class="tag-row">${tags.join('')}</div>` : ''}
+        </div>
       `;
       if (!s.locked) btn.addEventListener('click', () => onPick(s.id));
       list.appendChild(btn);

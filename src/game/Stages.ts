@@ -44,6 +44,8 @@ export type StageTheme = {
   exclusive: StageExclusive;
   /** Key crystals needed to open boss gate (0 = no boss gate) */
   bossKeys: number;
+  /** Preview image path under /previews */
+  preview: string;
   /** Time trial target seconds if used */
   timeLimit?: number;
 };
@@ -75,6 +77,7 @@ export const STAGES: StageTheme[] = [
     lives: 3,
     exclusive: 'bouncy-garden',
     bossKeys: 0,
+    preview: '/previews/stage-1.png',
   },
   {
     id: 2,
@@ -102,6 +105,7 @@ export const STAGES: StageTheme[] = [
     lives: 3,
     exclusive: 'crumble-flood',
     bossKeys: 0,
+    preview: '/previews/stage-2.png',
   },
   {
     id: 3,
@@ -129,6 +133,7 @@ export const STAGES: StageTheme[] = [
     lives: 3,
     exclusive: 'wind-corridor',
     bossKeys: 2,
+    preview: '/previews/stage-3.png',
   },
   {
     id: 4,
@@ -156,6 +161,7 @@ export const STAGES: StageTheme[] = [
     lives: 3,
     exclusive: 'minefield',
     bossKeys: 3,
+    preview: '/previews/stage-4.png',
   },
   {
     id: 5,
@@ -183,6 +189,7 @@ export const STAGES: StageTheme[] = [
     lives: 1,
     exclusive: 'boss-gate',
     bossKeys: 4,
+    preview: '/previews/stage-5.png',
   },
 ];
 
