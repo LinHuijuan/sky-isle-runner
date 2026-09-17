@@ -88,10 +88,22 @@ export class Hud {
     if (snapshot.lives !== this.lastLives) {
       this.lastLives = snapshot.lives;
       this.livesValue.replaceChildren();
-      for (let i = 0; i < snapshot.maxLives; i += 1) {
-        const pip = document.createElement('span');
-        pip.className = i < snapshot.lives ? 'life-pip' : 'life-pip empty';
-        this.livesValue.appendChild(pip);
+      if (snapshot.lives >= 99) {
+        const inf = document.createElement('span');
+        inf.className = 'life-pip';
+        inf.textContent = '∞';
+        inf.style.width = 'auto';
+        inf.style.borderRadius = '4px';
+        inf.style.padding = '0 4px';
+        inf.style.fontSize = '0.75rem';
+        inf.style.lineHeight = '12px';
+        this.livesValue.appendChild(inf);
+      } else {
+        for (let i = 0; i < snapshot.maxLives; i += 1) {
+          const pip = document.createElement('span');
+          pip.className = i < snapshot.lives ? 'life-pip' : 'life-pip empty';
+          this.livesValue.appendChild(pip);
+        }
       }
     }
 

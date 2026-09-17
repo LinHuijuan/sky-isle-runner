@@ -530,6 +530,16 @@ kbd {
   filter: grayscale(1) brightness(0.55);
 }
 
+.infinite-btn {
+  margin-bottom: 4px;
+}
+
+.infinite-btn[aria-pressed='true'] {
+  border-color: rgba(240, 179, 90, 0.55);
+  color: var(--accent-warm);
+  background: rgba(240, 179, 90, 0.1);
+}
+
 .stage-body {
   display: grid;
   grid-template-columns: 1fr auto;

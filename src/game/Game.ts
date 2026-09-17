@@ -42,7 +42,7 @@ type UiPanel = 'title' | 'stages' | 'loadout' | 'settings' | 'playing' | 'paused
 
 const MAX_LIVES = 3;
 const VOID_KILL_Y = -12;
-const COMBO_WINDOW = 2.2;
+const COMBO_WINDOW = 2.8;
 const CRYSTAL_COLLECT_XZ = 1.45;
 const CRYSTAL_COLLECT_Y = 1.7;
 const BOUNCE_VELOCITY = 13.5;
@@ -51,8 +51,9 @@ const DASH_COOLDOWN = 2.0;
 const DASH_DURATION = 0.45;
 const DASH_SPEED_BONUS = 8.5;
 const POWER_DURATION = 8;
-const MAGNET_RADIUS = 5.5;
+const MAGNET_RADIUS = 6.2;
 const BOOST_PAD_BONUS = 4.5;
+const RESPAWN_INVULN = 1.6;
 
 export class Game {
   private readonly renderer: THREE.WebGLRenderer;
@@ -102,6 +103,7 @@ export class Game {
   private lives = MAX_LIVES;
   private combo = 0;
   private comboTimer = 0;
+  private infiniteLives = false;
   private keysCollected = 0;
   private keysRequired = 0;
   private bossUnlocked = false;
@@ -370,6 +372,12 @@ export class Game {
       if (this.gameMode === 'stages') this.openStageSelect();
       else this.setMode('title');
     });
+    on('#btn-infinite', () => {
+      this.save.infiniteLives = !this.save.infiniteLives;
+      writeSave(this.save);
+      this.syncInfiniteBtn();
+    });
+    this.syncInfiniteBtn();
     on('#btn-start-run', () => this.startRun());
     on('#btn-retry', () => this.startRun());
     on('#btn-replay', () => this.startRun());
@@ -517,6 +525,15 @@ export class Game {
     this.setMode('stages');
   }
 
+  private syncInfiniteBtn(): void {
+    const btn = document.querySelector<HTMLElement>('#btn-infinite');
+    const state = document.querySelector('#infinite-state');
+    const on = this.save.infiniteLives;
+    if (btn) btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    if (state) state.textContent = on ? '开' : '关';
+    this.infiniteLives = on;
+  }
+
   private openLoadout(): void {
     const hint = document.querySelector('#loadout-hint');
     if (hint) {
@@ -551,6 +568,7 @@ export class Game {
       }, 250);
     }
     const seed = this.rngSeedFromTime();
+    this.infiniteLives = this.save.infiniteLives;
     if (this.gameMode === 'stages') {
       const stage = this.currentStage();
       this.maxLives = stage.lives;
@@ -563,7 +581,7 @@ export class Game {
     this.score = 0;
     this.elapsed = 0;
     this.distance = 0;
-    this.lives = this.maxLives;
+    this.lives = this.infiniteLives ? 99 : this.maxLives;
     this.combo = 0;
     this.comboTimer = 0;
     this.invuln = 0;
@@ -588,11 +606,11 @@ export class Game {
     const start = this.course.islands[0];
     const startVec = new THREE.Vector3(start.position.x, start.topY, start.position.z - 0.5);
     const n = this.players.length;
+    const startLives = this.infiniteLives ? 99 : this.maxLives;
     for (let i = 0; i < n; i += 1) {
       const pl = this.players[i];
-      // Offset only when two players share the pad
       const ox = n === 1 ? 0 : i === 0 ? -0.55 : 0.55;
-      pl.reset(startVec, this.maxLives, ox);
+      pl.reset(startVec, startLives, ox);
       pl.input.setP1ArrowsEnabled(i === 0 && n === 1);
       for (const k of this.loadout) pl.powerTimers[k] = POWER_DURATION;
       pl.tuning.autoSpeed = this.runnerTuning.autoSpeed;
@@ -725,7 +743,12 @@ export class Game {
   }
 
   private finishRun(won: boolean): void {
-    const stars = computeStars(this.score, this.crystals.length, this.lives, this.maxLives);
+    const stars = computeStars(
+      this.score,
+      this.crystals.length,
+      this.infiniteLives ? 0 : this.lives,
+      this.maxLives,
+    );
     this.save.runs += 1;
     if (this.distance > this.save.bestDistance) this.save.bestDistance = this.distance;
     if (this.score > this.save.bestScore) this.save.bestScore = this.score;
@@ -1143,20 +1166,29 @@ export class Game {
           this.particles.burst(p.clone(), new THREE.Color('#7ab8ff'), 26, 5);
           this.audio.land();
         } else {
-          pl.lives -= 1;
-          pl.combo = 0;
-          pl.comboTimer = 0;
-          this.popups.spawn(p.clone().setY(p.y + 1.5), `${pl.label} 受伤！`, '#ff6a6a');
-          this.particles.burst(p.clone(), new THREE.Color('#ff6a6a'), 22, 5);
-          this.audio.fall();
-          pl.runner.forwardSpeed.value *= 0.55;
-          if (pl.lives <= 0) {
-            pl.finished = true;
-            const alive = this.players.filter((x) => x.lives > 0);
-            if (alive.length === 0) {
-              this.setMode('fail');
-              this.finishRun(false);
-              return;
+          if (this.infiniteLives) {
+            pl.combo = 0;
+            pl.comboTimer = 0;
+            this.popups.spawn(p.clone().setY(p.y + 1.5), `${pl.label} 受伤！`, '#ff6a6a');
+            this.particles.burst(p.clone(), new THREE.Color('#ff6a6a'), 18, 4);
+            this.audio.fall();
+            pl.runner.forwardSpeed.value *= 0.7;
+          } else {
+            pl.lives -= 1;
+            pl.combo = 0;
+            pl.comboTimer = 0;
+            this.popups.spawn(p.clone().setY(p.y + 1.5), `${pl.label} 受伤！`, '#ff6a6a');
+            this.particles.burst(p.clone(), new THREE.Color('#ff6a6a'), 22, 5);
+            this.audio.fall();
+            pl.runner.forwardSpeed.value *= 0.55;
+            if (pl.lives <= 0) {
+              pl.finished = true;
+              const alive = this.players.filter((x) => x.lives > 0);
+              if (alive.length === 0) {
+                this.setMode('fail');
+                this.finishRun(false);
+                return;
+              }
             }
           }
         }
@@ -1500,6 +1532,31 @@ export class Game {
 
     this.audio.fall();
     this.cameraRig.addTrauma(0.45);
+
+    if (this.infiniteLives) {
+      // Unlimited lives: keep combo soft-reset, no life loss
+      pl.combo = 0;
+      pl.comboTimer = 0;
+      const z = Math.max(pl.runner.group.position.z, pl.checkpointZ);
+      const safe = this.findRespawnIsland(z);
+      const ox = pl.index === 0 ? -0.4 : 0.4;
+      pl.runner.reset(
+        new THREE.Vector3(safe.position.x + ox, safe.topY + 0.05, safe.position.z),
+      );
+      pl.runner.forwardSpeed.value = Math.max(
+        DEFAULT_RUNNER_TUNING.autoSpeed * 0.75,
+        pl.runner.forwardSpeed.value * 0.65,
+      );
+      pl.invuln = RESPAWN_INVULN;
+      this.particles.burst(pl.runner.group.position.clone(), new THREE.Color('#7ab8ff'), 22, 5);
+      this.popups.spawn(
+        pl.runner.group.position.clone().setY(pl.runner.group.position.y + 1.5),
+        `${pl.label} 复活`,
+        '#7ab8ff',
+      );
+      return;
+    }
+
     pl.lives -= 1;
     pl.combo = 0;
     pl.comboTimer = 0;
@@ -1529,7 +1586,7 @@ export class Game {
       DEFAULT_RUNNER_TUNING.autoSpeed * 0.7,
       pl.runner.forwardSpeed.value * 0.55,
     );
-    pl.invuln = 1.2;
+    pl.invuln = RESPAWN_INVULN;
     this.particles.burst(pl.runner.group.position.clone(), new THREE.Color('#ff9a6a'), 22, 5);
     this.popups.spawn(
       pl.runner.group.position.clone().setY(pl.runner.group.position.y + 1.5),

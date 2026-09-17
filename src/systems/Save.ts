@@ -15,6 +15,7 @@ export type SaveData = {
   skin: string;
   skin2: string;
   hintShown: boolean;
+  infiniteLives: boolean;
 };
 
 const KEY = 'sky-isle-runner-save-v2';
@@ -34,6 +35,7 @@ const DEFAULTS: SaveData = {
   skin: 'jade',
   skin2: 'pyro',
   hintShown: false,
+  infiniteLives: false,
 };
 
 export function loadSave(): SaveData {
