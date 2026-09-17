@@ -169,6 +169,7 @@ export class Game {
     this.syncPostSize();
     this.installTestHooks();
     this.audio.setMuted(this.save.muted);
+    this.audio.setVolume(this.save.volume ?? 0.85);
     this.reducedMotion = this.save.reducedMotion;
     this.applyQuality();
     this.hud.setSettingsLabels(this.save.quality, this.save.reducedMotion);
@@ -424,6 +425,21 @@ export class Game {
     on('#btn-mute', toggleMute);
     on('#btn-mute-pause', toggleMute);
     on('#btn-mute-settings', toggleMute);
+    const volSlider = document.querySelector<HTMLInputElement>('#volume-slider');
+    const volValue = document.querySelector('#volume-value');
+    const syncVolUi = () => {
+      if (volSlider) volSlider.value = String(Math.round(this.save.volume * 100));
+      if (volValue) volValue.textContent = `${Math.round(this.save.volume * 100)}%`;
+    };
+    syncVolUi();
+    this.audio.setVolume(this.save.volume);
+    volSlider?.addEventListener('input', () => {
+      const v = Number(volSlider.value) / 100;
+      this.save.volume = v;
+      writeSave(this.save);
+      this.audio.setVolume(v);
+      if (volValue) volValue.textContent = `${Math.round(v * 100)}%`;
+    });
     on('#btn-settings', () => {
       this.hud.setSettingsLabels(this.save.quality, this.save.reducedMotion);
       this.setMode('settings');
@@ -447,9 +463,12 @@ export class Game {
     on('#btn-reset-save', () => {
       this.save = resetSave();
       this.audio.setMuted(this.save.muted);
+      this.audio.setVolume(this.save.volume);
       this.hud.setMuteLabel(this.save.muted);
       this.hud.setTitleBest(0, 0);
       this.hud.setSettingsLabels(this.save.quality, this.save.reducedMotion);
+      syncVolUi();
+      this.clearMidRun();
     });
 
     // Loadout cards

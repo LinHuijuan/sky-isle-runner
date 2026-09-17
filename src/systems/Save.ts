@@ -51,6 +51,8 @@ export type SaveData = {
   skin2: string;
   hintShown: boolean;
   infiniteLives: boolean;
+  /** 0–1 master volume */
+  volume: number;
   /** Slot for mid-run continue; null when none */
   midRun: MidRunSave | null;
 };
@@ -73,6 +75,7 @@ const DEFAULTS: SaveData = {
   skin2: 'pyro',
   hintShown: false,
   infiniteLives: false,
+  volume: 0.85,
   midRun: null,
 };
 

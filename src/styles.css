@@ -782,6 +782,32 @@ kbd {
   margin: 0 0 10px;
 }
 
+.volume-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 12px 14px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-btn);
+  background: rgba(255, 255, 255, 0.05);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.volume-row input[type='range'] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.volume-row #volume-value {
+  min-width: 2.8em;
+  text-align: right;
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85rem;
+}
+
 strong.danger,
 #timer-value.danger { color: #ff8080; }
 

@@ -3,7 +3,9 @@ export class AudioSystem {
   private unlocked = false;
   private windGain: GainNode | null = null;
   private windSrc: AudioBufferSourceNode | null = null;
+  private master: GainNode | null = null;
   private muted = false;
+  private volume = 0.85;
 
   constructor() {
     const unlock = () => {
@@ -13,10 +15,28 @@ export class AudioSystem {
     window.addEventListener('keydown', unlock, { once: true });
   }
 
+  setVolume(v: number): void {
+    this.volume = Math.max(0, Math.min(1, v));
+    if (this.master && this.context) {
+      this.master.gain.setTargetAtTime(
+        this.muted ? 0 : this.volume,
+        this.context.currentTime,
+        0.05,
+      );
+    }
+  }
+
   setMuted(muted: boolean): void {
     this.muted = muted;
+    if (this.master && this.context) {
+      this.master.gain.setTargetAtTime(
+        muted ? 0 : this.volume,
+        this.context.currentTime,
+        0.05,
+      );
+    }
     if (this.windGain && this.context) {
-      this.windGain.gain.value = muted ? 0 : 0.02;
+      this.windGain.gain.value = muted ? 0 : 0.02 * this.volume;
     }
   }
 
@@ -32,6 +52,9 @@ export class AudioSystem {
     if (!AudioContextClass) return;
     this.context = new AudioContextClass();
     await this.context.resume();
+    this.master = this.context.createGain();
+    this.master.gain.value = this.muted ? 0 : this.volume;
+    this.master.connect(this.context.destination);
     this.unlocked = true;
     this.startWind();
   }
@@ -57,7 +80,7 @@ export class AudioSystem {
     filter.Q.value = 0.6;
     const gain = ctx.createGain();
     gain.gain.value = 0.02;
-    src.connect(filter).connect(gain).connect(ctx.destination);
+    src.connect(filter).connect(gain).connect(this.master ?? ctx.destination);
     src.start();
     this.windSrc = src;
     this.windGain = gain;
@@ -81,7 +104,7 @@ export class AudioSystem {
     gain.gain.setValueAtTime(0.0001, now);
     gain.gain.exponentialRampToValueAtTime(0.07, now + 0.015);
     gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.16);
-    oscillator.connect(gain).connect(this.context.destination);
+    oscillator.connect(gain).connect(this.master ?? this.context.destination);
     oscillator.start(now);
     oscillator.stop(now + 0.18);
   }
@@ -119,7 +142,7 @@ export class AudioSystem {
       gain.gain.setValueAtTime(0.0001, t);
       gain.gain.exponentialRampToValueAtTime(0.05, t + 0.02);
       gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
-      osc.connect(gain).connect(this.context!.destination);
+      osc.connect(gain).connect(this.master ?? this.context!.destination);
       osc.start(t);
       osc.stop(t + 0.2);
     });
@@ -142,7 +165,7 @@ export class AudioSystem {
       gain.gain.setValueAtTime(0.0001, t);
       gain.gain.exponentialRampToValueAtTime(0.06, t + 0.02);
       gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
-      osc.connect(gain).connect(this.context!.destination);
+      osc.connect(gain).connect(this.master ?? this.context!.destination);
       osc.start(t);
       osc.stop(t + 0.24);
     });
@@ -159,7 +182,7 @@ export class AudioSystem {
     gain.gain.setValueAtTime(0.0001, now);
     gain.gain.exponentialRampToValueAtTime(vol, now + 0.01);
     gain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
-    osc.connect(gain).connect(this.context.destination);
+    osc.connect(gain).connect(this.master ?? this.context.destination);
     osc.start(now);
     osc.stop(now + dur + 0.02);
   }
@@ -178,7 +201,7 @@ export class AudioSystem {
     const filter = ctx.createBiquadFilter();
     filter.type = 'lowpass';
     filter.frequency.value = 800;
-    src.connect(filter).connect(gain).connect(ctx.destination);
+    src.connect(filter).connect(gain).connect(this.master ?? ctx.destination);
     src.start();
   }
 
