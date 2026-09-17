@@ -54,6 +54,10 @@ const POWER_DURATION = 8;
 const MAGNET_RADIUS = 6.2;
 const BOOST_PAD_BONUS = 4.5;
 const RESPAWN_INVULN = 1.6;
+/** Soft auto-vacuum toward player when crystal is close but not touching */
+const CRYSTAL_ATTRACT_XZ = 1.15;
+/** Auto-retry delay after fail (seconds); 0 disables */
+const AUTO_RETRY_DELAY = 1.0;
 
 export class Game {
   private readonly renderer: THREE.WebGLRenderer;
@@ -104,6 +108,7 @@ export class Game {
   private combo = 0;
   private comboTimer = 0;
   private infiniteLives = false;
+  private autoRetryTimer = 0;
   private keysCollected = 0;
   private keysRequired = 0;
   private bossUnlocked = false;
@@ -387,7 +392,10 @@ export class Game {
       this.openLoadout();
     });
     on('#btn-quit-title', () => this.setMode('title'));
-    on('#btn-fail-title', () => this.setMode('title'));
+    on('#btn-fail-title', () => {
+      this.autoRetryTimer = 0;
+      this.setMode('title');
+    });
     on('#btn-win-title', () => this.setMode('title'));
     on('#btn-resume', () => this.resume());
     on('#btn-pause', () => {
@@ -560,6 +568,7 @@ export class Game {
   }
 
   private startRun(): void {
+    this.autoRetryTimer = 0;
     const startBtn = document.querySelector<HTMLButtonElement>('#btn-start-run');
     if (startBtn) {
       startBtn.disabled = true;
@@ -736,6 +745,7 @@ export class Game {
 
   private setMode(mode: UiPanel): void {
     this.mode = mode;
+    this.autoRetryTimer = mode === 'fail' ? AUTO_RETRY_DELAY : 0;
     if (mode === 'paused') {
       this.hud.showPause(this.score, this.crystals.length, this.distance);
     }
@@ -998,6 +1008,17 @@ export class Game {
       this.cameraRig.update(delta, this.runner.group.position, 0.2, 0, 0);
       this.animateGoalGate(elapsed);
       this.runner.update(0, elapsed, 0, false, this.runnerTuning, this.runner.group.position.y, false);
+    } else if (this.mode === 'fail') {
+      // Auto-retry after short delay; any UI click on retry also works instantly
+      if (this.autoRetryTimer > 0) {
+        this.autoRetryTimer -= delta;
+        if (this.autoRetryTimer <= 0) {
+          this.autoRetryTimer = 0;
+          this.startRun();
+        }
+      }
+      this.runner.update(0, elapsed, 0, false, this.runnerTuning, null, false);
+      this.animateGoalGate(elapsed);
     } else {
       if (this.mode === 'title') {
         const t = elapsed * 0.12;
@@ -1313,7 +1334,20 @@ export class Game {
         const dx = p.x - c.x;
         const dz = p.z - c.z;
         const dy = bodyY - c.y;
-        if (dx * dx + dz * dz > CRYSTAL_COLLECT_XZ * CRYSTAL_COLLECT_XZ) continue;
+        const distSqXZ = dx * dx + dz * dz;
+
+        // Soft attract when near (swipe-pickup feel)
+        if (
+          distSqXZ < CRYSTAL_ATTRACT_XZ * CRYSTAL_ATTRACT_XZ &&
+          distSqXZ > 0.01 &&
+          Math.abs(dy) < 1.8
+        ) {
+          const pull = 1 - Math.exp(-14 * 0.016);
+          c.x += dx * pull;
+          c.z += dz * pull;
+        }
+
+        if (distSqXZ > CRYSTAL_COLLECT_XZ * CRYSTAL_COLLECT_XZ) continue;
         if (Math.abs(dy) > CRYSTAL_COLLECT_Y) continue;
 
         crystal.collect();

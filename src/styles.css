@@ -770,6 +770,12 @@ kbd {
   font-weight: 600;
 }
 
+.auto-retry-hint {
+  margin: 0 0 8px;
+  color: var(--ink-faint);
+  font-size: 0.78rem;
+}
+
 .settings-list {
   display: grid;
   gap: 8px;
