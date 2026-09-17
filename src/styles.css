@@ -481,9 +481,11 @@ kbd {
   display: grid;
   gap: 8px;
   margin: 0 0 12px;
-  max-height: 48vh;
+  max-height: min(52vh, 420px);
   overflow: auto;
   padding-right: 4px;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
 }
 
 .stage-list::-webkit-scrollbar { width: 4px; }
@@ -516,6 +518,12 @@ kbd {
   border-radius: 10px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: #1a2438;
+  flex-shrink: 0;
+}
+
+.stage-item {
+  /* keep thumb from crushing text */
+  align-items: center;
 }
 
 .stage-thumb.locked {
