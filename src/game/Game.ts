@@ -507,6 +507,7 @@ export class Game {
         exclusive: s.exclusive,
         bossKeys: s.bossKeys,
         preview: s.preview,
+        difficulty: s.difficulty,
       })),
       (id) => {
         this.selectedStage = id;
@@ -517,6 +518,17 @@ export class Game {
   }
 
   private openLoadout(): void {
+    const hint = document.querySelector('#loadout-hint');
+    if (hint) {
+      if (this.gameMode === 'stages') {
+        const s = this.currentStage();
+        hint.textContent = `${s.code} ${s.name} · 可选 0–2 个开局道具`;
+      } else if (this.gameMode === 'coop') {
+        hint.textContent = '双人合作 · 各选外观后出发';
+      } else {
+        hint.textContent = '可选 0–2 个开局道具（关卡内仍可拾取）';
+      }
+    }
     this.setMode('loadout');
   }
 

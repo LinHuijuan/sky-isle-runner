@@ -309,6 +309,7 @@ export class Hud {
       exclusive?: string;
       bossKeys?: number;
       preview?: string;
+      difficulty?: number;
     }>,
     onPick: (id: number) => void,
   ): void {
@@ -333,6 +334,11 @@ export class Hud {
       if (s.bossKeys && s.bossKeys > 0) {
         tags.push(`<span class="tag warn">${s.bossKeys} 钥匙</span>`);
       }
+      const diff = s.difficulty ?? 0.3;
+      const diffDots = Math.max(1, Math.min(5, Math.ceil(diff * 5)));
+      const dots = Array.from({ length: 5 }, (_, i) =>
+        `<i class="diff-dot${i < diffDots ? ' on' : ''}"></i>`,
+      ).join('');
       const preview = s.preview
         ? `<img class="stage-thumb${s.locked ? ' locked' : ''}" src="${s.preview}" alt="" loading="lazy" />`
         : '';
@@ -340,8 +346,9 @@ export class Hud {
         ${preview}
         <div class="stage-body">
           <span class="code">${s.code}</span>
-          <span class="stars-mini">${'★'.repeat(s.stars)}${'☆'.repeat(3 - s.stars)}</span>
+          <span class="diff-dots" title="难度">${dots}</span>
           <span class="name">${s.name}</span>
+          <span class="stars-mini">${'★'.repeat(s.stars)}${'☆'.repeat(3 - s.stars)}</span>
           <span class="sub">${s.locked ? '通关上一关解锁' : s.subtitle}</span>
           ${tags.length ? `<div class="tag-row">${tags.join('')}</div>` : ''}
         </div>

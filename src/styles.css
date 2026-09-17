@@ -559,6 +559,25 @@ kbd {
   margin-top: 2px;
 }
 
+.diff-dots {
+  display: inline-flex;
+  gap: 3px;
+  align-self: start;
+  padding-top: 4px;
+}
+
+.diff-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.diff-dot.on {
+  background: var(--accent-warm);
+  box-shadow: 0 0 6px rgba(240, 179, 90, 0.5);
+}
+
 .stage-item:hover:not(.locked) {
   border-color: rgba(94, 224, 200, 0.45);
   background: rgba(94, 224, 200, 0.08);
