@@ -1,5 +1,40 @@
 export type QualityLevel = 'high' | 'medium';
 
+export type MidRunPlayerSnap = {
+  x: number;
+  y: number;
+  z: number;
+  lives: number;
+  score: number;
+  combo: number;
+  power: { magnet: number; shield: number; boost: number };
+  checkpointZ: number;
+  finished: boolean;
+};
+
+export type MidRunSave = {
+  v: 1;
+  gameMode: string;
+  selectedStage: number;
+  endlessWave: number;
+  timeLeft: number;
+  seed: number;
+  elapsed: number;
+  distance: number;
+  score: number;
+  keysCollected: number;
+  bossUnlocked: boolean;
+  loadout: string[];
+  infiniteLives: boolean;
+  maxLives: number;
+  /** Indices of collected crystals in spawn order */
+  collectedCrystals: number[];
+  collectedPowerups: number[];
+  crumbledIslands: number[];
+  players: MidRunPlayerSnap[];
+  savedAt: number;
+};
+
 export type SaveData = {
   bestDistance: number;
   bestScore: number;
@@ -16,6 +51,8 @@ export type SaveData = {
   skin2: string;
   hintShown: boolean;
   infiniteLives: boolean;
+  /** Slot for mid-run continue; null when none */
+  midRun: MidRunSave | null;
 };
 
 const KEY = 'sky-isle-runner-save-v2';
@@ -36,6 +73,7 @@ const DEFAULTS: SaveData = {
   skin2: 'pyro',
   hintShown: false,
   infiniteLives: false,
+  midRun: null,
 };
 
 export function loadSave(): SaveData {
@@ -65,9 +103,13 @@ export function writeSave(data: SaveData): void {
 }
 
 export function resetSave(): SaveData {
-  const next = { ...DEFAULTS, stageStars: {} };
+  const next = { ...DEFAULTS, stageStars: {}, midRun: null };
   writeSave(next);
   return next;
+}
+
+export function hasMidRun(save: SaveData): boolean {
+  return !!save.midRun && save.midRun.players?.length > 0;
 }
 
 export function computeStars(

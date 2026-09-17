@@ -15,7 +15,7 @@ import { Hud } from '../systems/Hud';
 import { ParticleBursts } from '../systems/Particles';
 import { createPostPipeline, type PostPipeline } from '../systems/PostFX';
 import { ScorePopups } from '../systems/ScorePopups';
-import { computeStars, loadSave, resetSave, writeSave, type SaveData } from '../systems/Save';
+import { computeStars, hasMidRun, loadSave, resetSave, writeSave, type SaveData } from '../systems/Save';
 import {
   STAGES,
   TIME_TRIAL_LIMIT,
@@ -112,6 +112,7 @@ export class Game {
   private keysCollected = 0;
   private keysRequired = 0;
   private bossUnlocked = false;
+  private courseSeed = 1;
   private mode: UiPanel = 'title';
   private gameMode: GameMode = 'stages';
   private selectedStage = 1;
@@ -253,6 +254,7 @@ export class Game {
     this.hud.setTarget(this.crystals.length);
     this.hud.setMuteLabel(this.save.muted);
     this.hud.setTitleBest(this.save.bestDistance, this.save.bestStars);
+    this.refreshContinueBtn();
   }
 
   private spawnPowerupsHazardsPads(): void {
@@ -391,12 +393,22 @@ export class Game {
       this.selectedStage = Math.min(STAGES.length, this.selectedStage + 1);
       this.openLoadout();
     });
-    on('#btn-quit-title', () => this.setMode('title'));
+    on('#btn-quit-title', () => {
+      this.saveMidRun();
+      this.setMode('title');
+      this.refreshContinueBtn();
+    });
     on('#btn-fail-title', () => {
       this.autoRetryTimer = 0;
+      this.clearMidRun();
       this.setMode('title');
+      this.refreshContinueBtn();
     });
-    on('#btn-win-title', () => this.setMode('title'));
+    on('#btn-win-title', () => {
+      this.clearMidRun();
+      this.setMode('title');
+      this.refreshContinueBtn();
+    });
     on('#btn-resume', () => this.resume());
     on('#btn-pause', () => {
       if (this.mode === 'playing') this.pause();
@@ -415,6 +427,9 @@ export class Game {
     on('#btn-settings', () => {
       this.hud.setSettingsLabels(this.save.quality, this.save.reducedMotion);
       this.setMode('settings');
+    });
+    on('#btn-continue', () => {
+      this.resumeMidRun();
     });
     on('#btn-back-settings', () => this.setMode('title'));
     on('#btn-quality', () => {
@@ -542,6 +557,157 @@ export class Game {
     this.infiniteLives = on;
   }
 
+  private refreshContinueBtn(): void {
+    const btn = document.querySelector<HTMLElement>('#btn-continue');
+    if (!btn) return;
+    btn.hidden = !hasMidRun(this.save);
+  }
+
+  private clearMidRun(): void {
+    if (!this.save.midRun) return;
+    this.save.midRun = null;
+    writeSave(this.save);
+    this.refreshContinueBtn();
+  }
+
+  private saveMidRun(): void {
+    if (this.mode !== 'playing' && this.mode !== 'paused') return;
+    try {
+      const collectedCrystals: number[] = [];
+      this.crystals.forEach((c, i) => {
+        if (!c.active) collectedCrystals.push(i);
+      });
+      const collectedPowerups: number[] = [];
+      this.powerups.forEach((p, i) => {
+        if (!p.active) collectedPowerups.push(i);
+      });
+      const crumbledIslands: number[] = [];
+      for (const island of this.course.islands) {
+        if (island.crumbled) crumbledIslands.push(island.id);
+      }
+      this.save.midRun = {
+        v: 1,
+        gameMode: this.gameMode,
+        selectedStage: this.selectedStage,
+        endlessWave: this.endlessWave,
+        timeLeft: this.timeLeft,
+        seed: this.courseSeed,
+        elapsed: this.elapsed,
+        distance: this.distance,
+        score: this.score,
+        keysCollected: this.keysCollected,
+        bossUnlocked: this.bossUnlocked,
+        loadout: [...this.loadout],
+        infiniteLives: this.infiniteLives,
+        maxLives: this.maxLives,
+        collectedCrystals,
+        collectedPowerups,
+        crumbledIslands,
+        players: this.players.map((pl) => ({
+          x: pl.runner.group.position.x,
+          y: pl.runner.group.position.y,
+          z: pl.runner.group.position.z,
+          lives: pl.lives,
+          score: pl.score,
+          combo: pl.combo,
+          power: { ...pl.powerTimers },
+          checkpointZ: pl.checkpointZ,
+          finished: pl.finished,
+        })),
+        savedAt: Date.now(),
+      };
+      writeSave(this.save);
+    } catch {
+      // ignore save errors
+    }
+  }
+
+  private resumeMidRun(): void {
+    const snap = this.save.midRun;
+    if (!snap || !snap.players?.length) return;
+
+    this.gameMode = (snap.gameMode as GameMode) || 'stages';
+    this.coop = this.gameMode === 'coop';
+    this.selectedStage = snap.selectedStage || 1;
+    this.endlessWave = snap.endlessWave || 0;
+    this.timeLeft = snap.timeLeft || 0;
+    this.loadout = (snap.loadout as Array<'magnet' | 'shield' | 'boost'>) || [];
+    this.infiniteLives = !!snap.infiniteLives;
+    this.maxLives = snap.maxLives || MAX_LIVES;
+
+    if (this.coop) this.ensureCoopPlayer();
+    else this.trimCoopPlayer();
+
+    // Rebuild identical course from stored seed
+    this.courseSeed = snap.seed;
+    let config: CourseConfig;
+    if (this.gameMode === 'stages') config = stageToConfig(this.currentStage(), snap.seed);
+    else if (this.gameMode === 'endless') config = endlessConfig(snap.seed, this.endlessWave);
+    else if (this.gameMode === 'timetrial') config = timeTrialConfig(snap.seed);
+    else config = stageToConfig(this.currentStage(), snap.seed);
+    this.rebuildCourse(config);
+
+    // Restore crystal / powerup / crumble
+    for (const i of snap.collectedCrystals) {
+      if (this.crystals[i]) this.crystals[i].collect();
+    }
+    for (const i of snap.collectedPowerups) {
+      if (this.powerups[i]) this.powerups[i].collect();
+    }
+    const crumbleSet = new Set(snap.crumbledIslands);
+    for (const island of this.course.islands) {
+      if (crumbleSet.has(island.id)) {
+        island.crumbled = true;
+        const mesh = this.course.meshes.get(island.id);
+        if (mesh) mesh.group.visible = false;
+      }
+    }
+
+    this.keysCollected = snap.keysCollected || 0;
+    this.bossUnlocked = snap.bossUnlocked || this.keysRequired === 0;
+    this.hud.setKeys(this.keysCollected, this.keysRequired);
+    if (this.bossUnlocked) this.unlockBossGate();
+
+    this.elapsed = snap.elapsed || 0;
+    this.distance = snap.distance || 0;
+    this.score = snap.score || 0;
+    this.combo = 0;
+    this.comboTimer = 0;
+    this.hitstopRemaining = 0;
+    this.timeScale = 1;
+    this.invuln = 0.5;
+    this.dashCooldown = 0;
+
+    // Restore players
+    const n = Math.min(this.players.length, snap.players.length);
+    for (let i = 0; i < n; i += 1) {
+      const pl = this.players[i];
+      const s = snap.players[i];
+      const ox = snap.players.length === 1 ? 0 : i === 0 ? -0.55 : 0.55;
+      pl.reset(new THREE.Vector3(s.x, s.y, s.z), s.lives, 0);
+      pl.lives = s.lives;
+      pl.score = s.score;
+      pl.combo = s.combo;
+      pl.comboTimer = 0;
+      pl.powerTimers = { ...s.power };
+      pl.checkpointZ = s.checkpointZ || 0;
+      pl.finished = s.finished;
+      pl.runner.forwardSpeed.value = DEFAULT_RUNNER_TUNING.autoSpeed;
+      pl.invuln = 0.5;
+      void ox;
+    }
+
+    this.p1.setSkin((this.save.skin as SkinId) || 'jade');
+    if (this.players[1]) this.players[1].setSkin((this.save.skin2 as SkinId) || 'pyro');
+    this.cameraRig.snapTo(this.focusPoint());
+    this.hud.setTarget(this.crystals.length);
+    if (this.gameMode === 'timetrial') this.hud.setTimer(this.timeLeft);
+    else this.hud.hideTimer();
+    this.setMode('playing');
+    void this.audio.unlock();
+    this.hud.showHint('已从存档继续', 2000);
+  }
+
   private openLoadout(): void {
     const hint = document.querySelector('#loadout-hint');
     if (hint) {
@@ -576,7 +742,9 @@ export class Game {
         startBtn.disabled = false;
       }, 250);
     }
+    this.clearMidRun();
     const seed = this.rngSeedFromTime();
+    this.courseSeed = seed;
     this.infiniteLives = this.save.infiniteLives;
     if (this.gameMode === 'stages') {
       const stage = this.currentStage();
@@ -695,6 +863,7 @@ export class Game {
   }
 
   private rebuildCourse(config: CourseConfig): void {
+    this.courseSeed = config.seed;
     this.scene.remove(this.course.group);
     this.course.dispose();
     for (const c of this.crystals) {
@@ -735,6 +904,7 @@ export class Game {
 
   private pause(): void {
     if (this.mode !== 'playing') return;
+    this.saveMidRun();
     this.setMode('paused');
   }
 
@@ -746,6 +916,7 @@ export class Game {
   private setMode(mode: UiPanel): void {
     this.mode = mode;
     this.autoRetryTimer = mode === 'fail' ? AUTO_RETRY_DELAY : 0;
+    if (mode === 'title') this.refreshContinueBtn();
     if (mode === 'paused') {
       this.hud.showPause(this.score, this.crystals.length, this.distance);
     }
@@ -753,6 +924,8 @@ export class Game {
   }
 
   private finishRun(won: boolean): void {
+    // Run is over — mid-run save is no longer valid
+    this.clearMidRun();
     const stars = computeStars(
       this.score,
       this.crystals.length,
