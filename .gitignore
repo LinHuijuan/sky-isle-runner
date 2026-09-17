@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.vite/
+*.log
+.DS_Store
+artifacts/
+scripts/playtest*.mjs
+scripts/capture-smoke.mjs
+scripts/patch-*.py

@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b1220" />
+    <link rel="icon" href="data:," />
+    <title>星尘浮岛 · Crystal Sky Isles</title>
+  </head>
+  <body>
+    <main id="app">
+      <canvas id="game-canvas" aria-label="星尘浮岛 3D 游戏画面"></canvas>
+
+      <section id="hud" aria-live="polite">
+        <div class="hud-cluster">
+          <div class="hud-chip crystal">
+            <span class="hud-label">水晶</span>
+            <strong><span id="score-value">0</span><span class="hud-sep">/</span><span id="target-value">0</span></strong>
+          </div>
+          <div class="hud-chip distance">
+            <span class="hud-label">距离</span>
+            <strong><span id="distance-value">0</span><span class="hud-unit">m</span></strong>
+          </div>
+          <div class="hud-chip lives">
+            <span class="hud-label">生命</span>
+            <div id="lives-value" class="lives-row" aria-label="剩余生命"></div>
+          </div>
+          <div class="hud-chip best">
+            <span class="hud-label">最佳</span>
+            <strong><span id="best-value">0</span><span class="hud-unit">m</span></strong>
+          </div>
+        </div>
+        <div id="power-row" class="power-row" hidden></div>
+        <div class="hud-side">
+          <div id="dash-meter" class="dash-meter" title="冲刺">
+            <div id="dash-fill" class="dash-fill"></div>
+            <span>冲</span>
+          </div>
+        </div>
+        <div id="combo-banner" class="combo-banner" hidden>连击 ×<span id="combo-value">1</span></div>
+        <div id="progress-wrap" class="progress-wrap" hidden>
+          <div class="progress-meta">
+            <span id="stage-label">关卡</span>
+            <span id="progress-pct">0%</span>
+          </div>
+          <div class="progress-track">
+            <div id="progress-fill" class="progress-fill"></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="overlay" class="overlay visible">
+        <div class="panel" id="panel-title">
+          <p class="eyebrow">CRYSTAL SKY ISLES</p>
+          <h1>星尘浮岛</h1>
+          <p class="lead">选择模式，配置道具，踏上云端试炼。</p>
+          <ul class="controls-list" style="text-align:left;margin-bottom:12px">
+            <li><kbd>A</kbd><kbd>D</kbd> 或 <kbd>←</kbd><kbd>→</kbd> 移动</li>
+            <li><kbd>空格</kbd> 跳跃 · <kbd>Shift</kbd> 冲刺 · <kbd>Esc</kbd> 暂停</li>
+          </ul>
+          <div class="mode-grid">
+            <button id="btn-mode-stages" class="mode-card primary" type="button">
+              <strong>关卡模式</strong>
+              <span>5 个主题关卡 · 逐关解锁</span>
+            </button>
+            <button id="btn-mode-endless" class="mode-card" type="button">
+              <strong>无尽模式</strong>
+              <span>难度持续攀升 · 挑战极限</span>
+            </button>
+            <button id="btn-mode-timetrial" class="mode-card" type="button">
+              <strong>计时挑战</strong>
+              <span>限时抵达终点</span>
+            </button>
+            <button id="btn-mode-coop" class="mode-card" type="button">
+              <strong>双人合作</strong>
+              <span>P1 WASD+空格 · P2 方向键+小键盘0</span>
+            </button>
+          </div>
+          <p class="best-line" id="title-best">最佳距离 0m</p>
+          <button id="btn-mute" class="btn ghost" type="button">声音：开</button>
+          <button id="btn-settings" class="btn ghost" type="button">设置</button>
+        </div>
+
+        <div class="panel" id="panel-settings" hidden>
+          <p class="eyebrow">SETTINGS</p>
+          <h2>设置</h2>
+          <div class="settings-list">
+            <button id="btn-quality" class="btn ghost" type="button">画质：高</button>
+            <button id="btn-motion" class="btn ghost" type="button">减少动态：关</button>
+            <button id="btn-mute-settings" class="btn ghost" type="button">声音：开</button>
+            <button id="btn-reset-save" class="btn ghost danger" type="button">重置存档</button>
+          </div>
+          <button id="btn-back-settings" class="btn primary" type="button">返回</button>
+        </div>
+
+        <div class="panel" id="panel-stages" hidden>
+          <p class="eyebrow">STAGES</p>
+          <h2>选择关卡</h2>
+          <div id="stage-list" class="stage-list"></div>
+          <button id="btn-back-title" class="btn ghost" type="button">返回</button>
+        </div>
+
+        <div class="panel" id="panel-loadout" hidden>
+          <p class="eyebrow">LOADOUT</p>
+          <h2>配置道具</h2>
+          <p class="lead" id="loadout-hint">可选 0–2 个开局道具（关卡内仍可拾取）</p>
+          <div class="loadout-grid" id="loadout-grid">
+            <button type="button" class="loadout-card" data-power="magnet">
+              <span class="dot magnet"></span>
+              <strong>磁铁</strong>
+              <span>开局 8 秒吸附水晶</span>
+            </button>
+            <button type="button" class="loadout-card" data-power="shield">
+              <span class="dot shield"></span>
+              <strong>护盾</strong>
+              <span>开局 8 秒抵挡伤害</span>
+            </button>
+            <button type="button" class="loadout-card" data-power="boost">
+              <span class="dot boost"></span>
+              <strong>加速</strong>
+              <span>开局 8 秒提速</span>
+            </button>
+          </div>
+          <p class="best-line" id="loadout-selected">已选：无</p>
+          <p class="eyebrow" style="margin-top:8px">外观皮肤</p>
+          <div class="skin-row" id="skin-row">
+            <button type="button" class="skin-swatch selected" data-skin="jade" title="翡翠" style="--sw:#2a9a88"></button>
+            <button type="button" class="skin-swatch" data-skin="pyro" title="火红" style="--sw:#c43c30"></button>
+            <button type="button" class="skin-swatch" data-skin="cryo" title="冰蓝" style="--sw:#4a90c8"></button>
+            <button type="button" class="skin-swatch" data-skin="electro" title="雷紫" style="--sw:#6a40b0"></button>
+          </div>
+          <div id="skin2-block" hidden>
+            <p class="eyebrow">P2 外观</p>
+            <div class="skin-row" id="skin-row-2">
+              <button type="button" class="skin-swatch selected" data-skin2="jade" title="翡翠" style="--sw:#2a9a88"></button>
+              <button type="button" class="skin-swatch" data-skin2="pyro" title="火红" style="--sw:#c43c30"></button>
+              <button type="button" class="skin-swatch" data-skin2="cryo" title="冰蓝" style="--sw:#4a90c8"></button>
+              <button type="button" class="skin-swatch" data-skin2="electro" title="雷紫" style="--sw:#6a40b0"></button>
+            </div>
+          </div>
+          <button id="btn-start-run" class="btn primary" type="button">出发</button>
+          <button id="btn-back-mode" class="btn ghost" type="button">返回</button>
+        </div>
+
+        <div class="panel" id="panel-pause" hidden>
+          <p class="eyebrow">PAUSED</p>
+          <h2>已暂停</h2>
+          <p class="lead" id="pause-stats">水晶 0 · 距离 0m</p>
+          <button id="btn-resume" class="btn primary" type="button">继续</button>
+          <button id="btn-restart-pause" class="btn ghost" type="button">重新开始</button>
+          <button id="btn-mute-pause" class="btn ghost" type="button">声音：开</button>
+          <button id="btn-quit-title" class="btn ghost" type="button">回到主菜单</button>
+        </div>
+
+        <div class="panel" id="panel-fail" hidden>
+          <p class="eyebrow">FALLEN</p>
+          <h2 id="fail-title">挑战失败</h2>
+          <div class="stars" id="fail-stars" aria-label="本局星级"></div>
+          <div class="stats-grid" id="fail-stats">
+            <div><span class="s-label">水晶</span><strong id="fail-crystals">0/0</strong></div>
+            <div><span class="s-label">距离</span><strong id="fail-dist">0m</strong></div>
+            <div><span class="s-label">用时</span><strong id="fail-time">0s</strong></div>
+          </div>
+          <p class="best-line" id="fail-best"></p>
+          <button id="btn-retry" class="btn primary" type="button">再来一次</button>
+          <button id="btn-fail-title" class="btn ghost" type="button">主菜单</button>
+        </div>
+
+        <div class="panel" id="panel-win" hidden>
+          <p class="eyebrow">CLEARED</p>
+          <h2>抵达终点</h2>
+          <div class="stars" id="win-stars" aria-label="本局星级"></div>
+          <div class="stats-grid" id="win-stats">
+            <div><span class="s-label">水晶</span><strong id="win-crystals">0/0</strong></div>
+            <div><span class="s-label">距离</span><strong id="win-dist">0m</strong></div>
+            <div><span class="s-label">用时</span><strong id="win-time">0s</strong></div>
+          </div>
+          <p class="best-line" id="win-best"></p>
+          <button id="btn-next-stage" class="btn primary" type="button" hidden>下一关</button>
+          <button id="btn-replay" class="btn ghost" type="button">再跑一局</button>
+          <button id="btn-win-title" class="btn ghost" type="button">主菜单</button>
+        </div>
+      </section>
+
+      <div id="touch-controls" aria-hidden="true">
+        <div id="touch-stick">
+          <div id="touch-knob"></div>
+        </div>
+        <div class="touch-actions">
+          <button id="boost-button" type="button" aria-label="冲刺">冲</button>
+          <button id="dash-button" type="button" aria-label="跳跃">跳</button>
+        </div>
+      </div>
+
+      <div id="hint-toast" class="hint-toast" hidden>左右移动 · 空格跳跃 · Shift冲刺</div>
+
+      <div id="collect-flash"></div>
+      <button id="btn-pause" class="icon-btn" type="button" aria-label="暂停" title="暂停">Ⅱ</button>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
