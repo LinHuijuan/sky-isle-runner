@@ -27,6 +27,18 @@
 
 * { box-sizing: border-box; }
 
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 html,
 body,
 #app {
@@ -74,6 +86,8 @@ body {
   gap: 8px;
   pointer-events: none;
   z-index: 4;
+  /* Isolate HUD repaints from the rest of the page. */
+  contain: layout style;
 }
 
 .hud-cluster {
@@ -248,10 +262,14 @@ body {
 
 .progress-fill {
   height: 100%;
-  width: 0%;
+  width: 100%;
+  /* Scale instead of width: keeps the bar off the layout path while it
+     animates every frame. */
+  transform: scaleX(0);
+  transform-origin: left center;
   border-radius: 999px;
   background: linear-gradient(90deg, #5ee0c8, #6ef0ff 55%, #f0b35a);
-  transition: width 0.12s linear;
+  transition: transform 0.12s linear;
   box-shadow: 0 0 12px rgba(94, 224, 200, 0.45);
 }
 
@@ -981,4 +999,41 @@ strong.danger,
 
   .stats-grid { gap: 6px; }
   .stats-grid > div { padding: 8px 6px; }
+}
+
+/* ─── Motion preferences ────────────────────────────────────── */
+/* The in-game "减少动态" toggle only affects 3D animation; these rules
+   honour the OS-level setting for the DOM/UI layer as well. */
+@media (prefers-reduced-motion: reduce) {
+  .panel,
+  .combo-banner,
+  .stars .on,
+  .hint-toast,
+  #collect-flash.fire {
+    animation: none !important;
+  }
+
+  .btn,
+  .mode-card,
+  .stage-item,
+  .loadout-card,
+  .skin-swatch,
+  .life-pip,
+  .progress-fill,
+  .overlay,
+  #touch-knob {
+    transition: none !important;
+  }
+
+  .mode-card:hover,
+  .stage-item:hover:not(.locked),
+  .skin-swatch:hover,
+  .skin-swatch.selected {
+    transform: none;
+  }
+
+  .hint-toast {
+    opacity: 1;
+    transform: translateX(-50%);
+  }
 }

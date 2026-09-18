@@ -11,7 +11,10 @@
     <main id="app">
       <canvas id="game-canvas" aria-label="星尘浮岛 3D 游戏画面"></canvas>
 
-      <section id="hud" aria-live="polite">
+      <!-- aria-live is intentionally NOT on #hud: its values change every frame,
+           which made screen readers announce continuously. A dedicated polite
+           region below carries only meaningful state changes. -->
+      <section id="hud">
         <div class="hud-cluster">
           <div class="hud-chip crystal">
             <span class="hud-label">水晶</span>
@@ -192,8 +195,8 @@
         </div>
       </section>
 
-      <div id="touch-controls" aria-hidden="true">
-        <div id="touch-stick">
+      <div id="touch-controls">
+        <div id="touch-stick" aria-hidden="true">
           <div id="touch-knob"></div>
         </div>
         <div class="touch-actions">
@@ -203,6 +206,8 @@
       </div>
 
       <div id="hint-toast" class="hint-toast" hidden>左右移动 · 空格跳跃 · Shift冲刺</div>
+      <!-- Throttled screen-reader announcements only -->
+      <p id="a11y-status" class="visually-hidden" role="status" aria-live="polite"></p>
 
       <div id="collect-flash"></div>
       <button id="btn-pause" class="icon-btn" type="button" aria-label="暂停" title="暂停">Ⅱ</button>

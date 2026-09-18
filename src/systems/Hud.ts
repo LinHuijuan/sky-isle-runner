@@ -63,30 +63,80 @@ export class Hud {
   private readonly stageLabel = this.getElement('#stage-label');
   private lastMode: string | null = null;
   private lastLives = -1;
+  /** Cached last-written values so identical frames do no DOM work. */
+  private lastScore = -1;
+  private lastTarget = -1;
+  private lastDistance = -1;
+  private lastBest = -1;
+  private lastPct = -1;
+  private lastStageLabel = '';
+  private lastCombo = -1;
+  private lastDashReady = -1;
+  private lastPowerCount = -1;
+  private readonly lastPowerSeconds = new Map<string, string>();
+  private timerChip: HTMLElement | null = null;
+  private timerValue: HTMLElement | null = null;
+  private lastTimerText = '';
+  private lastTimerDanger: boolean | null = null;
 
   setTarget(target: number): void {
     this.targetValue.textContent = String(target);
+    this.lastTarget = target;
+  }
+
+  /** Throttled screen-reader announcement (see #a11y-status). */
+  announce(text: string): void {
+    const el = document.querySelector('#a11y-status');
+    if (!el) return;
+    el.textContent = text;
   }
 
   update(snapshot: HudSnapshot): void {
-    this.scoreValue.textContent = String(snapshot.score);
-    this.targetValue.textContent = String(snapshot.target);
-    this.distanceValue.textContent = String(Math.floor(snapshot.distance));
-    this.bestValue.textContent = String(Math.floor(snapshot.bestDistance));
+    // Every write below is guarded: this runs 60x/s and unguarded writes to
+    // textContent / style invalidate layout even when nothing changed.
+    if (snapshot.score !== this.lastScore) {
+      this.lastScore = snapshot.score;
+      this.scoreValue.textContent = String(snapshot.score);
+    }
+    if (snapshot.target !== this.lastTarget) {
+      this.lastTarget = snapshot.target;
+      this.targetValue.textContent = String(snapshot.target);
+    }
+    const distance = Math.floor(snapshot.distance);
+    if (distance !== this.lastDistance) {
+      this.lastDistance = distance;
+      this.distanceValue.textContent = String(distance);
+    }
+    const best = Math.floor(snapshot.bestDistance);
+    if (best !== this.lastBest) {
+      this.lastBest = best;
+      this.bestValue.textContent = String(best);
+    }
 
-    // Course progress
+    // Course progress — transform only, so it stays off the layout path.
     if (snapshot.finishZ > 1) {
       const pct = Math.max(0, Math.min(100, (snapshot.distance / snapshot.finishZ) * 100));
       this.progressWrap.hidden = false;
-      this.progressFill.style.width = `${pct.toFixed(1)}%`;
-      this.progressPct.textContent = `${Math.floor(pct)}%`;
+      const rounded = Math.floor(pct);
+      if (rounded !== this.lastPct) {
+        this.lastPct = rounded;
+        this.progressFill.style.transform = `scaleX(${(pct / 100).toFixed(4)})`;
+        this.progressPct.textContent = `${rounded}%`;
+      }
     } else {
       this.progressWrap.hidden = true;
     }
-    if (snapshot.stageLabel) this.stageLabel.textContent = snapshot.stageLabel;
+    if (snapshot.stageLabel && snapshot.stageLabel !== this.lastStageLabel) {
+      this.lastStageLabel = snapshot.stageLabel;
+      this.stageLabel.textContent = snapshot.stageLabel;
+    }
 
     if (snapshot.lives !== this.lastLives) {
+      const previous = this.lastLives;
       this.lastLives = snapshot.lives;
+      if (previous >= 0 && snapshot.lives < previous) {
+        this.announce(snapshot.lives >= 99 ? '无限生命' : `剩余生命 ${snapshot.lives}`);
+      }
       this.livesValue.replaceChildren();
       if (snapshot.lives >= 99) {
         const inf = document.createElement('span');
@@ -109,15 +159,21 @@ export class Hud {
 
     if (snapshot.combo >= 2) {
       this.comboBanner.hidden = false;
-      this.comboValue.textContent = String(snapshot.combo);
-    } else {
+      if (snapshot.combo !== this.lastCombo) {
+        this.lastCombo = snapshot.combo;
+        this.comboValue.textContent = String(snapshot.combo);
+      }
+    } else if (!this.comboBanner.hidden) {
       this.comboBanner.hidden = true;
     }
 
     // Dash cooldown fill (0–1 ready)
     const ready = Math.max(0, Math.min(1, snapshot.dashReady));
-    this.dashFill.style.transform = `scaleY(${ready})`;
-    this.dashMeter.classList.toggle('cooling', ready < 0.99);
+    if (Math.abs(ready - this.lastDashReady) > 0.004) {
+      this.lastDashReady = ready;
+      this.dashFill.style.transform = `scaleY(${ready.toFixed(3)})`;
+      this.dashMeter.classList.toggle('cooling', ready < 0.99);
+    }
 
     this.renderPowers(snapshot.powers);
 
@@ -128,33 +184,52 @@ export class Hud {
   }
 
   private renderPowers(powers: PowerTimers): void {
-    const active: Array<[keyof PowerTimers, string, string]> = [];
-    if (powers.magnet > 0) active.push(['magnet', '磁铁', 'magnet']);
-    if (powers.shield > 0) active.push(['shield', '护盾', 'shield']);
-    if (powers.boost > 0) active.push(['boost', '加速', 'boost']);
+    let count = 0;
+    if (powers.magnet > 0) count += 1;
+    if (powers.shield > 0) count += 1;
+    if (powers.boost > 0) count += 1;
 
-    if (active.length === 0) {
-      this.powerRow.hidden = true;
-      this.powerRow.replaceChildren();
+    if (count === 0) {
+      // Guarded: this used to call replaceChildren() on every single frame.
+      if (this.lastPowerCount !== 0) {
+        this.lastPowerCount = 0;
+        this.lastPowerSeconds.clear();
+        this.powerRow.hidden = true;
+        this.powerRow.replaceChildren();
+      }
       return;
     }
-    this.powerRow.hidden = false;
-    // Rebuild only if count changes to reduce thrash
-    if (this.powerRow.childElementCount !== active.length) {
+
+    if (this.lastPowerCount !== count) {
+      this.lastPowerCount = count;
+      this.lastPowerSeconds.clear();
+      this.powerRow.hidden = false;
       this.powerRow.replaceChildren();
-      for (const [, label, cls] of active) {
+      const entries: Array<[keyof PowerTimers, string]> = [];
+      if (powers.magnet > 0) entries.push(['magnet', '磁铁']);
+      if (powers.shield > 0) entries.push(['shield', '护盾']);
+      if (powers.boost > 0) entries.push(['boost', '加速']);
+      for (const [key, label] of entries) {
         const chip = document.createElement('div');
-        chip.className = `power-chip ${cls}`;
+        chip.className = `power-chip ${key}`;
         chip.innerHTML = `<span class="dot"></span><span class="txt">${label}</span><span class="t"></span>`;
         this.powerRow.appendChild(chip);
       }
     }
-    active.forEach(([, , cls], i) => {
+
+    const keys: Array<keyof PowerTimers> = [];
+    if (powers.magnet > 0) keys.push('magnet');
+    if (powers.shield > 0) keys.push('shield');
+    if (powers.boost > 0) keys.push('boost');
+    for (let i = 0; i < keys.length; i += 1) {
+      const key = keys[i];
+      const text = `${Math.ceil(powers[key])}s`;
+      if (this.lastPowerSeconds.get(key) === text) continue;
+      this.lastPowerSeconds.set(key, text);
       const chip = this.powerRow.children[i] as HTMLElement | undefined;
-      if (!chip) return;
-      const t = chip.querySelector('.t');
-      if (t) t.textContent = `${Math.ceil(powers[cls as keyof PowerTimers])}s`;
-    });
+      const t = chip?.querySelector('.t');
+      if (t) t.textContent = text;
+    }
   }
 
   setTitleBest(distance: number, stars: number): void {
@@ -376,23 +451,33 @@ export class Hud {
   }
 
   setTimer(seconds: number): void {
-    let chip = document.querySelector('#hud-chip-timer') as HTMLElement | null;
-    if (!chip) {
-      chip = document.createElement('div');
+    if (!this.timerChip) {
+      const chip = document.createElement('div');
       chip.id = 'hud-chip-timer';
       chip.className = 'hud-chip';
       chip.innerHTML = `<span class="hud-label">时间</span><strong id="timer-value">0</strong>`;
       document.querySelector('.hud-cluster')?.appendChild(chip);
+      this.timerChip = chip;
+      this.timerValue = chip.querySelector('#timer-value');
+      this.lastTimerText = '';
+      this.lastTimerDanger = null;
     }
-    const v = chip.querySelector('#timer-value');
-    if (v) {
-      v.textContent = seconds.toFixed(1);
-      v.classList.toggle('danger', seconds < 10);
+    const text = seconds.toFixed(1);
+    if (text !== this.lastTimerText) {
+      this.lastTimerText = text;
+      if (this.timerValue) this.timerValue.textContent = text;
+    }
+    const danger = seconds < 10;
+    if (danger !== this.lastTimerDanger) {
+      this.lastTimerDanger = danger;
+      this.timerValue?.classList.toggle('danger', danger);
     }
   }
 
   hideTimer(): void {
-    document.querySelector('#hud-chip-timer')?.remove();
+    this.timerChip?.remove();
+    this.timerChip = null;
+    this.timerValue = null;
   }
 
   private getElement(selector: string): HTMLElement {
