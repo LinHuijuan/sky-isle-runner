@@ -372,11 +372,37 @@ const spamBtn = page.locator('#btn-start-run');
 if (await spamBtn.isVisible().catch(() => false)) await spamBtn.click();
 ```
 
+### 🧪 `test-midrun.mjs` 的分数断言是竞态，不是存档缺陷
+
+回归跑出 `score restored false`。排查后确认**不是**存档/恢复的问题，而是断言写法：
+
+```js
+const scoreBefore = (await diag()).score;   // ← 之后还有 ~150ms 实时运行
+await page.keyboard.press('Escape');
+...
+await page.click('#btn-continue');
+await page.waitForTimeout(500);             // ← 这 500ms 里分数又会长
+console.log('score restored', (await diag()).score === scoreBefore);
+```
+
+角色是**自动向前**跑的，所以两个窗口里都可能吃到水晶，分数自然 +1，而断言要求严格相等。
+同一份测试里 z 坐标的断言一直很稳，因为它带了 15 单位容差 —— 只有分数断言没有容差。
+
+这个问题本来就有，但**性能优化把它放大了**：每帧开销降低意味着单位墙钟时间内推进了更多
+模拟步，竞态窗口变宽，于是从"偶尔"变成"经常"。
+
+修法：
+- 在**暂停生效那一刻**读分数（那才是存档真正捕获的值），而不是在按键之前读；
+- 恢复后**轮询 `mode === 'playing'`** 代替固定 `waitForTimeout(500)`；
+- 断言真正的不变量 —— 「继续游戏不能丢进度」（单调不减 + 合理上界），而不是瞬时快照。
+
+修完连跑 5 次全过，且增量恒为 `+0` —— 比原来的严格相等**验证得更精确**，同时不再 flaky。
+
 ---
 
 ## 五、回归验证
 
-改动后完整跑通：
+在**最终代码**上（粒子修复 + 资源替换之后）完整重跑：
 
 | 脚本 | 结果 |
 |---|---|
@@ -384,14 +410,42 @@ if (await spamBtn.isVisible().catch(() => false)) await spamBtn.click();
 | `playtest-full.mjs` | 通过（移动 / 收集 / 冲刺 / 暂停恢复 / 死亡重开 / 双人） |
 | `playtest-deep.mjs` | 通过（第 5 关 Boss 钥匙 UI、第 1 关弹跳花园、R 重开、无尽模式） |
 | `test-infinite.mjs` | 通过（无限生命 HUD 显示 ∞、存档持久化） |
-| `test-midrun.mjs` | 通过（中途存档 + 继续、位置与分数还原） |
+| `test-midrun.mjs` | 通过（中途存档 + 继续；分数断言已修，连跑 5 次稳定） |
 | `verify-controls.mjs` | 通过（左键 +x、右键 −x 方向正确） |
 
 浏览器控制台：**0 个 error**，且原先的 `PCFSoftShadowMap has been deprecated` 告警已消失。
 
+### 视觉验证（第一轮缺失的部分）
+
+`capture-review.mjs` 走完全部界面逐张截图（`artifacts/review/`），
+**全部人工看过**：标题 / 设置 / 选关（预览图正常）/ 装备 / 跑动中 6 个时刻 /
+暂停 / 通关 / 失败。全部正常。
+
+同帧像素对比（`capture-frozen.mjs` + `tools/imgdiff.py`）：
+
+| 对比 | mean | 差异 > 8/255 | 差异 > 32/255 | 结论 |
+|---|---:|---:|---:|---|
+| 噪声底线（同构建 ×2） | 0.965 | 2.79% | 1.21% | 基线 |
+| 改动前 vs 改动后（rng 修复前） | 4.015 | **11.14%** | **3.43%** | **真回归** |
+| 改动前 vs 改动后（rng 修复后） | 0.855 | **2.58%** | **0.99%** | 低于底线 → 等价 |
+| 改动前 vs 改动后（换 WebP 贴图） | 1.500 | 2.84% | 1.16% | 处于噪声内 → 等价 |
+
+### 构建产物校验
+
+`npx vite build --outDir dist-verify` 后检查目录树：
+
+- 9 个 `.webp` 贴图 + 5 个 `.webp` 预览图全部就位，**无任何 `.png` 残留**
+- `raw-assets/` **未被拷贝**进产物（美术源文件不参与部署）
+- 真实负载 **2.1 MB**（对比改动前约 20.3 MB）；含 sourcemap 时 5.3 MB
+
+> 环境备注：`npm run build` 会卡在清空旧 `dist/`（沙箱把删除操作劫持到系统回收站后超时，
+> `genie-trash ... ETIMEDOUT`），与代码无关。构建到不存在的目录即可绕过。
+
 ---
 
 ## 六、改动文件清单
+
+### 源码
 
 ```
 src/game/Game.ts          Boss门节流 / ResizeObserver / 复用 scratch 与 HUD 快照 / 诊断对象复用 / 释放共享资源
@@ -399,30 +453,64 @@ src/game/PlayerSlot.ts    新增 gateBlockCooldown
 src/entities/Crystal.ts   几何体·材质·光晕纹理按 tone 共享；新增 disposeSharedCrystalAssets()
 src/entities/PowerUp.ts   按 kind 共享；修复图标材质泄漏；新增 disposeSharedPowerUpAssets()
 src/entities/Runner.ts    缓存 emblem / blobShadow 引用；修复阴影死代码；移除 surfaceGuess
-src/world/Island.ts       岩体·碎石·垂根几何合并；新增共享顶点色岩体材质
+src/world/Island.ts       岩体·碎石·垂根几何合并；新增共享顶点色岩体材质；**还原 rng 抽取顺序**
+src/systems/Particles.ts  补粒子贴图（方块→光点）；去掉无效 size 属性；改为线性淡出
 src/core/Renderer.ts      PCFSoftShadowMap → PCFShadowMap
 src/systems/Hud.ts        全量值比对 / 进度条 transform / 道具行守卫 / 计时器缓存 / 无障碍播报
+src/assets/Textures.ts    9 张贴图路径 .png → .webp
+src/game/Stages.ts        5 张预览图路径 .png → .webp
 src/styles.css            progress-fill 改 transform；#hud 加 contain；prefers-reduced-motion；.visually-hidden
 index.html                移除 #hud 的 aria-live；修 aria-hidden-focus；新增 #a11y-status
 ```
 
-新增探针脚本（都留在 `scripts/`，可复用）：
+### 资源
+
+```
+public/previews/*.webp    新增（6.97 MB PNG → 59 KB）
+public/textures/*.webp    新增（12.61 MB PNG → 1.32 MB）
+raw-assets/previews/*.png 原始图从 public/ 移出（不参与部署）
+raw-assets/textures/*.png 同上
+```
+
+### 工具与脚本（都留在仓库里，可复用）
 
 | 脚本 | 用途 |
 |---|---|
 | `perf-probe2.mjs` | patch WebGL 绘制调用，输出每帧 draw call / 三角形 / FPS + 资源计数 |
 | `bench-ab.mjs` | 冻结确定性场景做 A/B 基准（多轮取中位数） |
-| `static-serve.mjs` | 极简静态服务器，用于同时对比两个构建产物 |
+| `static-serve.mjs` | 极简静态服务器，用于同时对比两个构建产物（已补 `.webp` MIME） |
 | `leak-probe.mjs` | 反复重建赛道，观察几何体 / 纹理 / 堆内存增长 |
+| `capture-frozen.mjs` | 采集一张可复现的冻结帧，供改前/改后像素对比 |
+| `capture-review.mjs` | 走完整个 UI 流程逐张截图到 `artifacts/review/` |
+| `capture-fail.mjs` | 专拍失败结算面板（短暂出现，需加速触发 + 立即截图） |
+| `tools/imgdiff.py` | 量化两张图的差异（mean + `>8/255` + `>32/255` 占比） |
+| `tools/crop.py` | 裁剪放大某区域，用于"看一眼"而不是"量一下" |
+| `tools/side-by-side.py` | 生成左右对照图 |
+| `tools/optimize-assets.py` | 从 `raw-assets/` 重新生成 `public/` 的 WebP 资源 |
+
+### 测试脚本修复
+
+```
+scripts/playtest-deep.mjs   「双次点击开始」断言按设计不可能通过 → 加可见性守卫
+scripts/test-midrun.mjs     分数断言是竞态（模拟还在跑）→ 改读暂停时刻 + 轮询 + 断言不变量
+```
 
 ---
 
-## 七、⚠️ 需要你确认的一件事
+## 七、待你决定的两件事
 
-本次会话过程中发现，`sky-isle-runner/.git` 目录**已经不存在了**（会话开始时还在，`git log` 可以正常读取）。
+1. **`vite.config.ts` 的 `build.sourcemap: true`**
+   生产产物会带一个 3.3 MB 的 `.js.map`（JS 本体才 712 KB），占总体积 61%。
+   它不阻塞首屏（只有打开 devtools 才拉），但会让部署体积翻倍、并暴露全部源码。
+   是否保留由你定；要关掉就把这一行改成 `false`。
 
-- 源码 `src/`、`index.html` 等**全部完好无损**，已通过 `tsc` 类型检查与全部玩法回归脚本。
-- 丢失的只有 Git 提交历史（8 个 commit）。如果没有远端仓库，这些历史无法恢复。
-- 已排查：本次会话执行过的命令中没有删除 `.git` 的操作（唯一一次 `git stash` 报的是 `Unable to create index.lock: No such file or directory`，说明执行时 `.git` 已经不在了）。
+2. **漏捡钥匙会软锁在终点门前**（见第四节第 8 条）
+   缺 boss 钥匙时 `checkGoal()` 直接 `continue`，玩家卡在进度 100% 的门前，
+   身后岛屿已消失、回不去，只能按 Esc 手动重开。属于玩法决策，我没有擅自改。
 
-建议：检查一下是否有杀毒软件 / 同步盘 / IDE 的清理动作，并尽快为该项目重新 `git init` + 首次提交，或确认远端仓库是否还在。
+---
+
+## 附：关于上一轮报告的 `.git` 丢失
+
+上一轮报告第七节记录的 `.git` 目录丢失，**已由用户还原**。本次会话在此基础上
+继续工作，`git log` 确认原有 8 个提交完好，本轮在其之上新增 13 个提交，工作区干净。
