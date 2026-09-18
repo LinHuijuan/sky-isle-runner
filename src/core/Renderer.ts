@@ -11,7 +11,9 @@ export function createRenderer(canvas: HTMLCanvasElement): THREE.WebGLRenderer {
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.05;
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  // PCFSoftShadowMap was removed in three r184 — it now logs a deprecation
+  // warning and silently falls back to PCF. Ask for PCF explicitly.
+  renderer.shadowMap.type = THREE.PCFShadowMap;
   return renderer;
 }
 
