@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { createGrassDetailTexture, loadGameTextures } from '../assets/Textures';
 
 export type IslandKind = 'normal' | 'narrow' | 'bouncy' | 'crumble' | 'moving';
@@ -39,6 +40,60 @@ const movingPalette = ['#7ab8f0', '#6aa4e0', '#8ec8ff'];
 let grassTex: THREE.Texture | null = null;
 let rockTex: THREE.Texture | null = null;
 let grassBladeTex: THREE.CanvasTexture | null = null;
+/** One material for every merged rock mass — the per-layer tint rides on vertex colours. */
+let rockVertexMat: THREE.MeshStandardMaterial | null = null;
+
+const TMP_EULER = new THREE.Euler();
+const TMP_MATRIX = new THREE.Matrix4();
+
+/** Bakes a flat colour into a geometry's vertex-colour attribute (linear space). */
+function bakeVertexColor(geo: THREE.BufferGeometry, color: THREE.Color): void {
+  const count = geo.attributes.position.count;
+  const arr = new Float32Array(count * 3);
+  for (let i = 0; i < count; i += 1) {
+    arr[i * 3] = color.r;
+    arr[i * 3 + 1] = color.g;
+    arr[i * 3 + 2] = color.b;
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+}
+
+/** Applies an XYZ-euler + translation to a geometry, matching Object3D semantics. */
+function bakeTransform(
+  geo: THREE.BufferGeometry,
+  rot: THREE.Euler,
+  x: number,
+  y: number,
+  z: number,
+): void {
+  TMP_MATRIX.makeRotationFromEuler(rot);
+  TMP_MATRIX.setPosition(x, y, z);
+  geo.applyMatrix4(TMP_MATRIX);
+}
+
+function getRockVertexMaterial(): THREE.MeshStandardMaterial {
+  if (!rockVertexMat) {
+    rockVertexMat = new THREE.MeshStandardMaterial({
+      color: '#ffffff',
+      roughness: 0.88,
+      metalness: 0.06,
+      flatShading: true,
+      vertexColors: true,
+      map: rockTex,
+    });
+  }
+  return rockVertexMat;
+}
+
+/** Merges same-attribute geometries, falling back to the originals if it fails. */
+function mergeOrNull(parts: THREE.BufferGeometry[]): THREE.BufferGeometry | null {
+  if (parts.length === 0) return null;
+  if (parts.length === 1) return parts[0];
+  const merged = mergeGeometries(parts, false);
+  if (!merged) return null;
+  for (const p of parts) p.dispose();
+  return merged;
+}
 
 function ensureTextures(): void {
   if (!grassTex) {
@@ -52,9 +107,11 @@ function ensureTextures(): void {
 export function disposeSharedIslandTextures(): void {
   // Shared PNG maps are disposed via disposeGameTextures; only clear locals
   grassBladeTex?.dispose();
+  rockVertexMat?.dispose();
   grassTex = null;
   rockTex = null;
   grassBladeTex = null;
+  rockVertexMat = null;
 }
 
 export function createIslandMesh(
@@ -170,21 +227,18 @@ export function createIslandMesh(
   } else {
     const rockHeight = def.height * 1.35;
     const baseY = def.topY - 0.18;
-    // Stacked frustums — volumetric mass, not a thin cone
+    // Stacked frustums — volumetric mass, not a thin cone.
+    // All three are merged into one mesh: previously this cost 3 draw calls
+    // plus 3 cloned materials per island.
     const layers = [
       { rTop: 0.95, rBot: 0.72, h: rockHeight * 0.38, y: baseY - rockHeight * 0.19 },
       { rTop: 0.72, rBot: 0.42, h: rockHeight * 0.34, y: baseY - rockHeight * 0.5 },
       { rTop: 0.42, rBot: 0.12, h: rockHeight * 0.3, y: baseY - rockHeight * 0.8 },
     ];
+    const rockParts: THREE.BufferGeometry[] = [];
     for (let li = 0; li < layers.length; li += 1) {
       const L = layers[li];
-      const g = new THREE.CylinderGeometry(
-        def.radius * L.rTop,
-        def.radius * L.rBot,
-        L.h,
-        10,
-        1,
-      );
+      const g = new THREE.CylinderGeometry(def.radius * L.rTop, def.radius * L.rBot, L.h, 10, 1);
       const pos = g.attributes.position;
       for (let i = 0; i < pos.count; i += 1) {
         const j = (rng() - 0.5) * 0.12;
@@ -195,19 +249,20 @@ export function createIslandMesh(
       g.computeVertexNormals();
       // Each layer slightly darker / different tint for readable mass
       const shade = 1.05 - li * 0.12;
-      const mat = sharedRock.clone() as THREE.MeshStandardMaterial;
-      mat.color = new THREE.Color(rockPalette[Math.floor(rng() * rockPalette.length)])
+      const tint = new THREE.Color(rockPalette[Math.floor(rng() * rockPalette.length)])
         .multiplyScalar(shade)
         .lerp(new THREE.Color('#ffffff'), 0.2);
-      mat.map = rockTex;
-      mat.roughness = 0.88;
-      mat.flatShading = true;
-      const mesh = new THREE.Mesh(g, mat);
-      mesh.position.y = L.y;
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      group.add(mesh);
-      disposables.push(g, mat);
+      bakeVertexColor(g, tint);
+      g.translate(0, L.y, 0);
+      rockParts.push(g);
+    }
+    const rockGeo = mergeOrNull(rockParts) ?? rockParts[0];
+    if (rockGeo) {
+      const rockMesh = new THREE.Mesh(rockGeo, getRockVertexMaterial());
+      rockMesh.castShadow = true;
+      rockMesh.receiveShadow = true;
+      group.add(rockMesh);
+      disposables.push(rockGeo);
     }
 
     // Faceted mid belt for craggy read
@@ -257,52 +312,67 @@ export function createIslandMesh(
       disposables.push(glowGeo, glowMat);
     }
 
-    // Tiny floating rock shards under isle
+    // Tiny floating rock shards under isle — merged into one mesh
     if (def.radius > 2.2 && rng() > 0.3) {
-      const shardGeo = new THREE.TetrahedronGeometry(0.12 + rng() * 0.1, 0);
-      const shardMat = new THREE.MeshStandardMaterial({
-        color: '#8a9aaa',
-        roughness: 0.7,
-        metalness: 0.15,
-        transparent: true,
-        opacity: 0.75,
-      });
       const count = 2 + Math.floor(rng() * 3);
+      const shardParts: THREE.BufferGeometry[] = [];
       for (let i = 0; i < count; i += 1) {
-        const s = new THREE.Mesh(shardGeo, shardMat);
+        const g = new THREE.TetrahedronGeometry(0.12 + rng() * 0.1, 0);
         const a = rng() * Math.PI * 2;
         const rr = def.radius * (0.3 + rng() * 0.5);
-        s.position.set(
+        TMP_EULER.set(rng(), rng(), rng(), 'XYZ');
+        bakeTransform(
+          g,
+          TMP_EULER,
           Math.cos(a) * rr,
           def.topY - rockHeight * (0.3 + rng() * 0.4),
           Math.sin(a) * rr,
         );
-        s.rotation.set(rng(), rng(), rng());
-        group.add(s);
+        shardParts.push(g);
       }
-      disposables.push(shardGeo, shardMat);
+      const shardGeo = mergeOrNull(shardParts) ?? shardParts[0];
+      if (shardGeo) {
+        const shardMat = new THREE.MeshStandardMaterial({
+          color: '#8a9aaa',
+          roughness: 0.7,
+          metalness: 0.15,
+          transparent: true,
+          opacity: 0.75,
+        });
+        const shards = new THREE.Mesh(shardGeo, shardMat);
+        group.add(shards);
+        disposables.push(shardGeo, shardMat);
+      }
     }
 
-    // Hanging roots — sparse, only large isles
+    // Hanging roots — sparse, only large isles. Merged: previously every
+    // single root allocated its own geometry *and* material.
     if (def.radius > 2.4) {
       const rootCount = 2 + Math.floor(rng() * 3);
+      const rootParts: THREE.BufferGeometry[] = [];
       for (let r = 0; r < rootCount; r += 1) {
         const len = 0.7 + rng() * 1.6;
-        const rootGeo = new THREE.CylinderGeometry(0.03, 0.01, len, 4);
-        const rootMat = new THREE.MeshStandardMaterial({
-          color: '#4a3a28',
-          roughness: 0.95,
-        });
-        const root = new THREE.Mesh(rootGeo, rootMat);
+        const g = new THREE.CylinderGeometry(0.03, 0.01, len, 4);
         const a = rng() * Math.PI * 2;
         const rr = def.radius * (0.25 + rng() * 0.4);
-        root.position.set(
+        TMP_EULER.set(0, 0, (rng() - 0.5) * 0.35, 'XYZ');
+        bakeTransform(
+          g,
+          TMP_EULER,
           Math.cos(a) * rr,
           def.topY - def.height * 1.35 * 0.45 - len * 0.4,
           Math.sin(a) * rr,
         );
-        root.rotation.z = (rng() - 0.5) * 0.35;
-        group.add(root);
+        rootParts.push(g);
+      }
+      const rootGeo = mergeOrNull(rootParts) ?? rootParts[0];
+      if (rootGeo) {
+        const rootMat = new THREE.MeshStandardMaterial({
+          color: '#4a3a28',
+          roughness: 0.95,
+        });
+        const roots = new THREE.Mesh(rootGeo, rootMat);
+        group.add(roots);
         disposables.push(rootGeo, rootMat);
       }
     }
