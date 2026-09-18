@@ -12,7 +12,7 @@ import { AudioSystem } from '../systems/AudioSystem';
 import { CameraRig } from '../systems/CameraRig';
 import { DebugTools, type DebugTuning } from '../systems/DebugTools';
 import { Hud, type HudSnapshot, type PanelName } from '../systems/Hud';
-import { ParticleBursts } from '../systems/Particles';
+import { ParticleBursts, disposeSharedParticleAssets } from '../systems/Particles';
 import { createPostPipeline, type PostPipeline } from '../systems/PostFX';
 import { ScorePopups } from '../systems/ScorePopups';
 import { computeStars, hasMidRun, loadSave, resetSave, writeSave, type SaveData } from '../systems/Save';
@@ -312,6 +312,7 @@ export class Game {
     disposeSharedCrystalAssets();
     disposeSharedPowerUpAssets();
     disposeSharedIslandTextures();
+    disposeSharedParticleAssets();
     disposeGameTextures();
     this.renderer.dispose();
     this.diagnostics = null;
