@@ -52,6 +52,10 @@ export class Runner {
   private landBob = 0;
   private skinId: SkinId = 'jade';
   private cape!: THREE.Mesh;
+  private emblem!: THREE.Mesh;
+  private blobShadow!: THREE.Mesh;
+  /** Last known ground height under the runner — drives the blob shadow fade. */
+  private groundY = 0;
   private trailPoints?: THREE.Points;
   private trailPos!: Float32Array;
   private trailCol!: Float32Array;
@@ -204,6 +208,7 @@ export class Runner {
     const gemM = new THREE.Mesh(gem, this.accent);
     gemM.position.set(0, 0.86, -0.155);
     gemM.name = 'emblem';
+    this.emblem = gemM;
     this.bodyRoot.add(gemM);
 
     // — Shoulders (teal pads) —
@@ -416,6 +421,7 @@ export class Runner {
     s.rotation.x = -Math.PI / 2;
     s.position.y = 0.02;
     s.name = 'blob-shadow';
+    this.blobShadow = s;
     this.group.add(s);
   }
 
@@ -499,6 +505,7 @@ export class Runner {
     this.forwardSpeed.value = 0;
     this.grounded = true;
     this.state = 'grounded';
+    this.groundY = position.y;
     this.coyote = 0;
     this.jumpBuffer = 0;
     this.runPhase = 0;
@@ -565,6 +572,7 @@ export class Runner {
     this.group.position.z += this.forwardSpeed.value * delta;
     this.group.position.y += this.verticalVel * delta;
 
+    if (surfaceY !== null) this.groundY = surfaceY;
     if (surfaceY !== null && this.group.position.y <= surfaceY + 0.08 && this.verticalVel <= 0.01) {
       const wasAir = !this.grounded;
       this.group.position.y = surfaceY;
@@ -627,9 +635,10 @@ export class Runner {
     this.bodyRoot.scale.y = THREE.MathUtils.damp(this.bodyRoot.scale.y, 1.28, 10, delta);
     this.bodyRoot.scale.z = this.bodyRoot.scale.x;
 
-    const emb = this.bodyRoot.getObjectByName('emblem');
+    // Cached reference — getObjectByName() walked the whole subtree every frame.
+    const emb = this.emblem;
     if (emb) {
-      const mat = (emb as THREE.Mesh).material as THREE.MeshStandardMaterial;
+      const mat = emb.material as THREE.MeshStandardMaterial;
       mat.emissiveIntensity = 1.6 + Math.sin(elapsed * 3) * 0.5;
       emb.rotation.y = elapsed * 1.5;
     }
@@ -714,13 +723,15 @@ export class Runner {
     this.cape.rotation.x = 0.5 + Math.sin(ph) * (0.06 + speedN * 0.08) + speed * 0.008;
     this.cape.rotation.z = Math.sin(ph * 0.6) * 0.04;
 
-    const blob = this.group.getObjectByName('blob-shadow');
+    // Blob shadow fades with height above the last known ground.
+    // (Previously surfaceGuess() returned the runner's own Y, so `air` was
+    // always 0 and the shadow never changed.)
+    const blob = this.blobShadow;
     if (blob) {
-      const air = Math.max(0, this.group.position.y - surfaceGuess(this));
+      const air = Math.max(0, this.group.position.y - this.groundY);
       const sc = THREE.MathUtils.clamp(1 - air * 0.1, 0.55, 1);
       blob.scale.setScalar(sc);
-      const mat = (blob as THREE.Mesh).material as THREE.MeshBasicMaterial;
-      mat.opacity = 0.32 * sc;
+      (blob.material as THREE.MeshBasicMaterial).opacity = 0.32 * sc;
     }
   }
 
@@ -773,8 +784,4 @@ export class Runner {
     this.materials.push(mat);
     return mat;
   }
-}
-
-function surfaceGuess(runner: Runner): number {
-  return runner.group.position.y;
 }
