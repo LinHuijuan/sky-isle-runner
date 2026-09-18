@@ -314,22 +314,34 @@ export function createIslandMesh(
 
     // Tiny floating rock shards under isle — merged into one mesh
     if (def.radius > 2.2 && rng() > 0.3) {
+      // NOTE: the rng() calls below must stay in their original order and
+      // count. The course is generated from a seeded stream, so adding or
+      // reordering a single draw shifts every later random decision and
+      // silently changes the whole level (grass density, crack angles, ...).
+      const shardBase = new THREE.TetrahedronGeometry(0.12 + rng() * 0.1, 0);
       const count = 2 + Math.floor(rng() * 3);
       const shardParts: THREE.BufferGeometry[] = [];
       for (let i = 0; i < count; i += 1) {
-        const g = new THREE.TetrahedronGeometry(0.12 + rng() * 0.1, 0);
         const a = rng() * Math.PI * 2;
         const rr = def.radius * (0.3 + rng() * 0.5);
-        TMP_EULER.set(rng(), rng(), rng(), 'XYZ');
+        const yRng = rng();
+        const rx = rng();
+        const ry = rng();
+        const rz = rng();
+        // Cloning a shared base keeps every shard identical to the old code,
+        // which reused a single TetrahedronGeometry for all of them.
+        const g = shardBase.clone();
+        TMP_EULER.set(rx, ry, rz, 'XYZ');
         bakeTransform(
           g,
           TMP_EULER,
           Math.cos(a) * rr,
-          def.topY - rockHeight * (0.3 + rng() * 0.4),
+          def.topY - rockHeight * (0.3 + yRng * 0.4),
           Math.sin(a) * rr,
         );
         shardParts.push(g);
       }
+      shardBase.dispose();
       const shardGeo = mergeOrNull(shardParts) ?? shardParts[0];
       if (shardGeo) {
         const shardMat = new THREE.MeshStandardMaterial({
