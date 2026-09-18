@@ -24,6 +24,8 @@ export class PlayerSlot {
   dashTime = 0;
   hazardCooldown = 0;
   boostPadCooldown = 0;
+  /** Throttles the "boss gate still locked" push-back + message. */
+  gateBlockCooldown = 0;
   pendingDash = false;
   footstepAccumulator = 0;
   trailAccumulator = 0;
@@ -57,6 +59,7 @@ export class PlayerSlot {
     this.dashTime = 0;
     this.hazardCooldown = 0;
     this.boostPadCooldown = 0;
+    this.gateBlockCooldown = 0;
     this.pendingDash = false;
     this.checkpointZ = 0;
     this.invuln = 0;

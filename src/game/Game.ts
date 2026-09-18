@@ -2,16 +2,16 @@ import * as THREE from 'three';
 import { InputController } from '../core/InputController';
 import { Loop } from '../core/Loop';
 import { createRenderer, resizeRenderer } from '../core/Renderer';
-import { Crystal } from '../entities/Crystal';
+import { Crystal, disposeSharedCrystalAssets } from '../entities/Crystal';
 import { Hazard } from '../entities/Hazard';
-import { PowerUp } from '../entities/PowerUp';
+import { PowerUp, disposeSharedPowerUpAssets } from '../entities/PowerUp';
 import { DEFAULT_RUNNER_TUNING, Runner, type RunnerTuning } from '../entities/Runner';
 import type { SkinId } from '../entities/Skins';
 import { PlayerSlot } from './PlayerSlot';
 import { AudioSystem } from '../systems/AudioSystem';
 import { CameraRig } from '../systems/CameraRig';
 import { DebugTools, type DebugTuning } from '../systems/DebugTools';
-import { Hud } from '../systems/Hud';
+import { Hud, type HudSnapshot, type PanelName } from '../systems/Hud';
 import { ParticleBursts } from '../systems/Particles';
 import { createPostPipeline, type PostPipeline } from '../systems/PostFX';
 import { ScorePopups } from '../systems/ScorePopups';
@@ -40,6 +40,37 @@ import { disposeGameTextures } from '../assets/Textures';
 
 type UiPanel = 'title' | 'stages' | 'loadout' | 'settings' | 'playing' | 'paused' | 'fail' | 'win';
 
+/** Shape of window.__THREE_GAME_DIAGNOSTICS__ — reused, never re-allocated. */
+type Diagnostics = {
+  frame: number;
+  elapsed: number;
+  score: number;
+  targetScore: number;
+  lives: number;
+  distance: number;
+  mode: UiPanel;
+  complete: boolean;
+  player: {
+    position: { x: number; y: number; z: number };
+    speed: number;
+    grounded: boolean;
+  };
+  renderer: {
+    calls: number;
+    triangles: number;
+    geometries: number;
+    textures: number;
+    programs: number;
+  };
+  canvas: {
+    clientWidth: number;
+    clientHeight: number;
+    width: number;
+    height: number;
+    dpr: number;
+  };
+};
+
 const MAX_LIVES = 3;
 const VOID_KILL_Y = -12;
 const COMBO_WINDOW = 2.8;
@@ -58,6 +89,12 @@ const RESPAWN_INVULN = 1.6;
 const CRYSTAL_ATTRACT_XZ = 1.15;
 /** Auto-retry delay after fail (seconds); 0 disables */
 const AUTO_RETRY_DELAY = 1.0;
+/** Cooldown between "locked gate" push-back messages (seconds) */
+const GATE_BLOCK_COOLDOWN = 1.6;
+
+/** Hoisted trail colours — avoids a `new THREE.Color` per emission. */
+const TRAIL_P1 = new THREE.Color('#9af0ff');
+const TRAIL_P2 = new THREE.Color('#ffd090');
 
 export class Game {
   private readonly renderer: THREE.WebGLRenderer;
@@ -97,6 +134,28 @@ export class Game {
     exposure: 1.05,
     maxDpr: 2,
   };
+
+  /** Reused scratch objects — avoids per-frame allocations. */
+  private readonly steerScratch = new THREE.Vector2();
+  private readonly touchScratch = new THREE.Vector2();
+  private readonly focusScratch = new THREE.Vector3();
+  private readonly hudSnapshot: HudSnapshot = {
+    score: 0,
+    target: 0,
+    distance: 0,
+    finishZ: 0,
+    lives: 0,
+    maxLives: 0,
+    combo: 0,
+    bestDistance: 0,
+    dashReady: 1,
+    powers: { magnet: 0, shield: 0, boost: 0 },
+    mode: 'title',
+  };
+  /** Resize is event-driven; the flag is consumed once per frame. */
+  private resizePending = true;
+  private resizeObserver: ResizeObserver | null = null;
+  private diagnostics: Diagnostics | null = null;
 
   private readonly debugTools: DebugTools;
   private course: CourseData;
@@ -165,8 +224,8 @@ export class Game {
     this.createScene();
     this.bindUi();
     this.cameraRig.snapTo(this.p1.runner.group.position);
-    resizeRenderer(this.renderer, this.camera, this.tuning.maxDpr);
-    this.syncPostSize();
+    this.handleResize();
+    this.installResizeObserver();
     this.installTestHooks();
     this.audio.setMuted(this.save.muted);
     this.audio.setVolume(this.save.volume ?? 0.85);
@@ -179,6 +238,23 @@ export class Game {
 
   private get p1(): PlayerSlot {
     return this.players[0];
+  }
+
+  /** Only resize when the canvas box actually changes — not every frame. */
+  private installResizeObserver(): void {
+    const onResize = () => {
+      this.resizePending = true;
+    };
+    this.resizeObserver = new ResizeObserver(onResize);
+    this.resizeObserver.observe(this.canvas);
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
+  }
+
+  private handleResize(): void {
+    resizeRenderer(this.renderer, this.camera, this.tuning.maxDpr);
+    this.syncPostSize();
+    this.resizePending = false;
   }
 
   /** Primary runner (P1). */
@@ -208,6 +284,8 @@ export class Game {
 
   dispose(): void {
     this.loop.stop();
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
     this.input.dispose();
     this.audio.dispose();
     this.debugTools.dispose();
@@ -231,9 +309,12 @@ export class Game {
     this.post.dispose();
     this.environment.dispose();
     this.course.dispose();
+    disposeSharedCrystalAssets();
+    disposeSharedPowerUpAssets();
     disposeSharedIslandTextures();
     disposeGameTextures();
     this.renderer.dispose();
+    this.diagnostics = null;
     window.__THREE_GAME_DIAGNOSTICS__ = undefined;
     window.__THREE_GAME_TEST_HOOKS__ = undefined;
   }
@@ -841,11 +922,15 @@ export class Game {
     }
   }
 
+  /** Writes into a reused vector — callers must consume it before the next call. */
   private focusPoint(): THREE.Vector3 {
-    if (this.players.length < 2) return this.p1.runner.group.position.clone();
+    const out = this.focusScratch;
+    if (this.players.length < 2) {
+      return out.copy(this.p1.runner.group.position);
+    }
     const a = this.players[0].runner.group.position;
     const b = this.players[1].runner.group.position;
-    return new THREE.Vector3(
+    return out.set(
       (a.x + b.x) * 0.5,
       (a.y + b.y) * 0.5 + 0.3,
       Math.max(a.z, b.z) * 0.65 + ((a.z + b.z) * 0.5) * 0.35,
@@ -877,8 +962,7 @@ export class Game {
     this.environment.sun.shadow.mapSize.set(high ? 2048 : 1024, high ? 2048 : 1024);
     this.environment.sun.shadow.map?.dispose();
     this.environment.sun.shadow.map = null;
-    resizeRenderer(this.renderer, this.camera, this.tuning.maxDpr);
-    this.syncPostSize();
+    this.handleResize();
   }
 
   private rebuildCourse(config: CourseConfig): void {
@@ -985,19 +1069,9 @@ export class Game {
       );
     }
 
-    this.hud.update({
-      score: this.score,
-      target: this.crystals.length,
-      distance: this.distance,
-      finishZ: this.course.finishZ,
-      lives: this.lives,
-      maxLives: this.maxLives,
-      combo: this.combo,
-      bestDistance: this.save.bestDistance,
-      dashReady: 1,
-      powers: { ...this.powerTimers },
-      mode: won ? 'win' : 'fail',
-    });
+    this.hud.update(
+      this.buildHudSnapshot(won ? 'win' : 'fail', 1, this.save.bestDistance),
+    );
     if (won) {
       this.hud.showWin(
         this.score,
@@ -1021,8 +1095,7 @@ export class Game {
 
   private update(delta: number, elapsed: number): void {
     this.frame += 1;
-    resizeRenderer(this.renderer, this.camera, this.tuning.maxDpr);
-    this.syncPostSize();
+    if (this.resizePending) this.handleResize();
     if (this.pausedForScreenshot) {
       this.publishDiagnostics();
       return;
@@ -1055,11 +1128,11 @@ export class Game {
         pl.tuning.maxAutoSpeed = baseMax;
         pl.tuning.speedRamp = baseRamp;
 
-        const steer = new THREE.Vector2();
+        const steer = this.steerScratch;
         if (pl.index === 0) {
           // P1: keyboard A/D via PlayerInput + touch stick via InputController
           pl.input.readSteerWithTouch(steer);
-          const touch = new THREE.Vector2();
+          const touch = this.touchScratch;
           this.input.readSteer(touch);
           if (Math.abs(touch.x) > Math.abs(steer.x)) steer.x = touch.x;
         } else {
@@ -1127,6 +1200,7 @@ export class Game {
         pl.dashTime = Math.max(0, pl.dashTime - gDelta);
         pl.hazardCooldown = Math.max(0, pl.hazardCooldown - gDelta);
         pl.boostPadCooldown = Math.max(0, pl.boostPadCooldown - gDelta);
+        pl.gateBlockCooldown = Math.max(0, pl.gateBlockCooldown - gDelta);
         pl.invuln = Math.max(0, pl.invuln - gDelta);
         pl.comboTimer = Math.max(0, pl.comboTimer - gDelta);
         if (pl.comboTimer <= 0) pl.combo = 0;
@@ -1155,19 +1229,19 @@ export class Game {
 
         if (!this.reducedMotion && pl.runner.forwardSpeed.value > 8) {
           pl.trailAccumulator += gDelta;
+          const trailColor = pl.index === 0 ? TRAIL_P1 : TRAIL_P2;
           while (pl.trailAccumulator >= 0.03) {
             pl.trailAccumulator -= 0.03;
-            this.particles.trail(
-              pl.runner.group.position,
-              pl.index === 0 ? new THREE.Color('#9af0ff') : new THREE.Color('#ffd090'),
-              1,
-            );
+            this.particles.trail(pl.runner.group.position, trailColor, 1);
           }
         }
       }
 
       this.audio.setWindIntensity(this.p1.runner.forwardSpeed.value);
-      this.distance = Math.max(0, ...this.players.map((pl) => pl.runner.group.position.z));
+      this.distance = 0;
+      for (const pl of this.players) {
+        if (pl.runner.group.position.z > this.distance) this.distance = pl.runner.group.position.z;
+      }
       this.collectCrystals();
       this.updatePickupsAndHazards(gDelta, elapsed);
       this.checkCheckpoint();
@@ -1237,18 +1311,11 @@ export class Game {
 
     this.particles.update(delta);
     this.popups.update(delta);
-    this.hud.update({
-      score: this.score,
-      target: this.crystals.length,
-      distance: this.distance,
-      finishZ: this.course.finishZ,
-      lives: this.lives,
-      maxLives: this.maxLives,
-      combo: this.combo,
-      bestDistance: Math.max(this.save.bestDistance, this.distance),
-      dashReady: this.dashCooldown <= 0 ? 1 : 1 - this.dashCooldown / DASH_COOLDOWN,
-      powers: { ...this.powerTimers },
-      stageLabel:
+    this.hud.update(
+      this.buildHudSnapshot(
+        this.mode,
+        this.dashCooldown <= 0 ? 1 : 1 - this.dashCooldown / DASH_COOLDOWN,
+        Math.max(this.save.bestDistance, this.distance),
         this.gameMode === 'stages'
           ? this.currentStage().code
           : this.gameMode === 'endless'
@@ -1258,8 +1325,8 @@ export class Game {
               : this.gameMode === 'coop'
                 ? '双人'
                 : '',
-      mode: this.mode,
-    });
+      ),
+    );
     this.publishDiagnostics();
   }
 
@@ -1634,16 +1701,21 @@ export class Game {
         const p0 = pl.runner.group.position;
         const dx0 = p0.x - finishX;
         const dz0 = p0.z - finishZ;
-        if (dx0 * dx0 + dz0 * dz0 < 4.5 * 4.5 && Math.abs(p0.y - finishY) < 1.5) {
-          if (!pl.finished) {
-            this.popups.spawn(
-              p0.clone().setY(p0.y + 2),
-              `还需 ${this.keysRequired - this.keysCollected} 颗钥匙`,
-              '#ff6a9a',
-            );
-            pl.runner.forwardSpeed.value *= 0.3;
-            pl.runner.group.position.z -= 1.2;
-          }
+        if (
+          dx0 * dx0 + dz0 * dz0 < 4.5 * 4.5 &&
+          Math.abs(p0.y - finishY) < 1.5 &&
+          pl.gateBlockCooldown <= 0
+        ) {
+          // Throttled: previously this ran every frame, spawning a popup and
+          // shoving the player back ~72 units/s, making the gate unreachable.
+          pl.gateBlockCooldown = GATE_BLOCK_COOLDOWN;
+          this.popups.spawn(
+            p0.clone().setY(p0.y + 2),
+            `还需 ${this.keysRequired - this.keysCollected} 颗钥匙`,
+            '#ff6a9a',
+          );
+          pl.runner.forwardSpeed.value *= 0.3;
+          pl.runner.group.position.z -= 0.6;
         }
         continue;
       }
@@ -1840,6 +1912,31 @@ export class Game {
     this.post.setSize(w, h, dpr);
   }
 
+  /** Fills the reused HUD snapshot — no per-frame object churn. */
+  private buildHudSnapshot(
+    mode: PanelName,
+    dashReady: number,
+    bestDistance: number,
+    stageLabel?: string,
+  ): HudSnapshot {
+    const s = this.hudSnapshot;
+    s.score = this.score;
+    s.target = this.crystals.length;
+    s.distance = this.distance;
+    s.finishZ = this.course.finishZ;
+    s.lives = this.lives;
+    s.maxLives = this.maxLives;
+    s.combo = this.combo;
+    s.bestDistance = bestDistance;
+    s.dashReady = dashReady;
+    s.mode = mode;
+    s.stageLabel = stageLabel;
+    s.powers.magnet = this.powerTimers.magnet;
+    s.powers.shield = this.powerTimers.shield;
+    s.powers.boost = this.powerTimers.boost;
+    return s;
+  }
+
   private installTestHooks(): void {
     window.__THREE_GAME_TEST_HOOKS__ = {
       seed: (value: number) => {
@@ -1924,40 +2021,54 @@ export class Game {
     };
   }
 
+  /** Mutates one reused object — publishing every frame must not allocate. */
   private publishDiagnostics(): void {
     const info = this.renderer.info;
-    window.__THREE_GAME_DIAGNOSTICS__ = {
-      frame: this.frame,
-      elapsed: this.elapsed,
-      score: this.score,
-      targetScore: this.crystals.length,
-      lives: this.lives,
-      distance: this.distance,
-      mode: this.mode,
-      complete: this.mode === 'win',
-      player: {
-        position: {
-          x: this.runner.group.position.x,
-          y: this.runner.group.position.y,
-          z: this.runner.group.position.z,
+    let d = this.diagnostics;
+    if (!d) {
+      d = {
+        frame: 0,
+        elapsed: 0,
+        score: 0,
+        targetScore: 0,
+        lives: 0,
+        distance: 0,
+        mode: 'title',
+        complete: false,
+        player: {
+          position: { x: 0, y: 0, z: 0 },
+          speed: 0,
+          grounded: false,
         },
-        speed: this.runner.forwardSpeed.value,
-        grounded: this.runner.grounded,
-      },
-      renderer: {
-        calls: info.render.calls,
-        triangles: info.render.triangles,
-        geometries: info.memory.geometries,
-        textures: info.memory.textures,
-        programs: info.programs?.length ?? 0,
-      },
-      canvas: {
-        clientWidth: this.canvas.clientWidth,
-        clientHeight: this.canvas.clientHeight,
-        width: this.canvas.width,
-        height: this.canvas.height,
-        dpr: Math.min(window.devicePixelRatio || 1, this.tuning.maxDpr),
-      },
-    };
+        renderer: { calls: 0, triangles: 0, geometries: 0, textures: 0, programs: 0 },
+        canvas: { clientWidth: 0, clientHeight: 0, width: 0, height: 0, dpr: 1 },
+      };
+      this.diagnostics = d;
+    }
+    const pos = this.runner.group.position;
+    d.frame = this.frame;
+    d.elapsed = this.elapsed;
+    d.score = this.score;
+    d.targetScore = this.crystals.length;
+    d.lives = this.lives;
+    d.distance = this.distance;
+    d.mode = this.mode;
+    d.complete = this.mode === 'win';
+    d.player.position.x = pos.x;
+    d.player.position.y = pos.y;
+    d.player.position.z = pos.z;
+    d.player.speed = this.runner.forwardSpeed.value;
+    d.player.grounded = this.runner.grounded;
+    d.renderer.calls = info.render.calls;
+    d.renderer.triangles = info.render.triangles;
+    d.renderer.geometries = info.memory.geometries;
+    d.renderer.textures = info.memory.textures;
+    d.renderer.programs = info.programs?.length ?? 0;
+    d.canvas.clientWidth = this.canvas.clientWidth;
+    d.canvas.clientHeight = this.canvas.clientHeight;
+    d.canvas.width = this.canvas.width;
+    d.canvas.height = this.canvas.height;
+    d.canvas.dpr = Math.min(window.devicePixelRatio || 1, this.tuning.maxDpr);
+    window.__THREE_GAME_DIAGNOSTICS__ = d;
   }
 }
