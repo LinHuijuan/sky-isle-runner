@@ -38,11 +38,22 @@ for (let i = 0; i < 12; i += 1) {
 let d = await diag();
 console.log('before pause', d?.mode, 'z', d?.player?.position?.z?.toFixed(1), 'score', d?.score);
 const zBefore = d?.player?.position?.z ?? 0;
-const scoreBefore = d?.score ?? 0;
 
-// Pause then quit to title (saves mid-run)
+// Pause, THEN read the score the save will actually capture.
+//
+// Reading it before the pause (as this script used to) races with the ~150ms of
+// live play between the read and the pause taking effect: the runner advances
+// on its own and can pick up a crystal in that window, so an exact-equality
+// assertion on the score fails for a reason that has nothing to do with
+// save/restore. Faster rendering just widens the window and makes it flakier.
 await page.keyboard.press('Escape');
 await page.waitForTimeout(150);
+const paused = await diag();
+const scoreSaved = paused?.score ?? 0;
+const zSaved = paused?.player?.position?.z ?? zBefore;
+console.log('at pause', paused?.mode, 'z', zSaved?.toFixed(1), 'score', scoreSaved);
+
+// Quit to title (saves mid-run)
 await page.click('#btn-quit-title');
 await page.waitForTimeout(250);
 
@@ -54,11 +65,28 @@ console.log('has midRun', saveRaw?.includes('"midRun"') && !saveRaw.includes('"m
 // Continue
 if (contVisible) {
   await page.click('#btn-continue');
-  await page.waitForTimeout(500);
+  // Poll for the run to come back rather than sleeping a fixed 500ms: every
+  // millisecond spent waiting is more live play, and the runner collects
+  // crystals on its own.
+  await page.waitForFunction(
+    () => window.__THREE_GAME_DIAGNOSTICS__?.mode === 'playing',
+    null,
+    { timeout: 5000 },
+  ).catch(() => {});
   d = await diag();
   console.log('after continue', d?.mode, 'z', d?.player?.position?.z?.toFixed(1), 'score', d?.score);
   const zAfter = d?.player?.position?.z ?? 0;
-  console.log('z restored near', Math.abs(zAfter - zBefore) < 15, 'score restored', d?.score === scoreBefore);
+  const grew = (d?.score ?? 0) - scoreSaved;
+  // The invariant is "continuing does not lose progress", not "the score is
+  // frozen". The run is live the moment it resumes, so the score can legitimately
+  // tick up before this line reads it — an exact-equality check here is flaky by
+  // construction. Progress must never go backwards, and must not jump so far
+  // that we are clearly looking at a different run.
+  console.log(
+    'z restored near', Math.abs(zAfter - zSaved) < 15,
+    'score restored', d?.score >= scoreSaved && grew < 15,
+    `(saved ${scoreSaved}, got ${d?.score}, +${grew})`,
+  );
 } else {
   console.log('FAIL continue button not visible');
 }
