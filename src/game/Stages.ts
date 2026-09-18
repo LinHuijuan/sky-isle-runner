@@ -77,7 +77,7 @@ export const STAGES: StageTheme[] = [
     lives: 3,
     exclusive: 'bouncy-garden',
     bossKeys: 0,
-    preview: '/previews/stage-1.png',
+    preview: '/previews/stage-1.webp',
   },
   {
     id: 2,
@@ -105,7 +105,7 @@ export const STAGES: StageTheme[] = [
     lives: 3,
     exclusive: 'crumble-flood',
     bossKeys: 0,
-    preview: '/previews/stage-2.png',
+    preview: '/previews/stage-2.webp',
   },
   {
     id: 3,
@@ -133,7 +133,7 @@ export const STAGES: StageTheme[] = [
     lives: 3,
     exclusive: 'wind-corridor',
     bossKeys: 2,
-    preview: '/previews/stage-3.png',
+    preview: '/previews/stage-3.webp',
   },
   {
     id: 4,
@@ -161,7 +161,7 @@ export const STAGES: StageTheme[] = [
     lives: 3,
     exclusive: 'minefield',
     bossKeys: 3,
-    preview: '/previews/stage-4.png',
+    preview: '/previews/stage-4.webp',
   },
   {
     id: 5,
@@ -189,7 +189,7 @@ export const STAGES: StageTheme[] = [
     lives: 1,
     exclusive: 'boss-gate',
     bossKeys: 4,
-    preview: '/previews/stage-5.png',
+    preview: '/previews/stage-5.webp',
   },
 ];
 
