@@ -427,7 +427,7 @@ export class Hud {
         `<i class="diff-dot${i < diffDots ? ' on' : ''}"></i>`,
       ).join('');
       const preview = s.preview
-        ? `<img class="stage-thumb${s.locked ? ' locked' : ''}" src="${s.preview}" alt="" loading="lazy" />`
+        ? `<img class="stage-thumb${s.locked ? ' locked' : ''}" src="${s.preview.replace(/^\//, import.meta.env.BASE_URL)}" alt="" loading="lazy" />`
         : '';
       btn.innerHTML = `
         ${preview}

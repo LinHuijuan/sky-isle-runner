@@ -17,7 +17,9 @@ let sharedTex: GameTexSet | null = null;
 function makeGameTextures(): GameTexSet {
   const loader = new THREE.TextureLoader();
   const mk = (path: string, repeat = 2): THREE.Texture => {
-    const t = loader.load(path);
+    // 将根绝对路径（/textures/...）转为相对 base，兼容 GitHub Pages 子路径
+    const url = path.replace(/^\//, import.meta.env.BASE_URL);
+    const t = loader.load(url);
     t.wrapS = THREE.RepeatWrapping;
     t.wrapT = THREE.RepeatWrapping;
     t.repeat.set(repeat, repeat);
